@@ -1,0 +1,88 @@
+package main
+
+import (
+	"log"
+	"os"
+	"os/signal"
+	"syscall"
+
+	"github.com/gin-contrib/cors"
+	"github.com/gin-gonic/gin"
+
+	"github.com/academi/backend/internal/ai"
+	"github.com/academi/backend/internal/auth"
+	"github.com/academi/backend/internal/community"
+	"github.com/academi/backend/internal/config"
+	"github.com/academi/backend/internal/database"
+	docs "github.com/academi/backend/internal/docs"
+	"github.com/academi/backend/internal/guide"
+	notifications "github.com/academi/backend/internal/notifications"
+)
+
+func main() {
+	cfg := config.Load()
+
+	defer database.CloseDB()
+
+	gin.SetMode(cfg.Server.Mode)
+
+	r := gin.Default()
+
+	r.Use(cors.New(cors.Config{
+		AllowOrigins:     cfg.CORS.Origins,
+		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
+		ExposeHeaders:    []string{"Content-Length"},
+		AllowCredentials: true,
+	}))
+
+	r.GET("/health", func(c *gin.Context) {
+		c.JSON(200, gin.H{"status": "ok", "service": "academi-backend"})
+	})
+
+	api := r.Group("/api/v1")
+	{
+		authSvc := auth.NewService(cfg)
+		authSvc.RegisterRoutes(api)
+
+		jwt := auth.JWTMiddleware(cfg)
+
+		aiSvc := ai.NewService(cfg)
+		aiRoutes := api.Group("/ai")
+		aiRoutes.Use(jwt)
+		aiSvc.RegisterRoutes(aiRoutes)
+
+		communitySvc := community.NewService()
+		communityRoutes := api.Group("/community")
+		communityRoutes.Use(jwt)
+		communitySvc.RegisterRoutes(communityRoutes)
+
+		docsSvc := docs.NewService()
+		docsRoutes := api.Group("/docs")
+		docsRoutes.Use(jwt)
+		docsSvc.RegisterRoutes(docsRoutes)
+
+		guideSvc := guide.NewService()
+		guideRoutes := api.Group("/guides")
+		guideRoutes.Use(jwt)
+		guideSvc.RegisterRoutes(guideRoutes)
+
+		notifSvc := notifications.NewService()
+		notifRoutes := api.Group("/notifications")
+		notifRoutes.Use(jwt)
+		notifSvc.RegisterRoutes(notifRoutes)
+	}
+
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		log.Printf("Academi backend starting on :%s", cfg.Server.Port)
+		if err := r.Run(":" + cfg.Server.Port); err != nil {
+			log.Fatal("Server failed:", err)
+		}
+	}()
+
+	<-stop
+	log.Println("Shutting down...")
+}
