@@ -2,6 +2,7 @@ package docs
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -29,25 +30,83 @@ func (s *Service) CreateDoc(c *gin.Context) {
 
 	userID := auth.GetUserID(c)
 
+	summary := req.AISummary
+	if summary == "" && req.Content != "" {
+		summary = req.Content
+		if len(summary) > 320 {
+			summary = summary[:320] + "…"
+		}
+	}
+	size := req.Size
+	if size == "" && req.Content != "" {
+		size = fmt.Sprintf("%d", len(req.Content))
+	}
+
 	doc := models.Document{
 		ID:         uuid.New().String(),
 		Title:      req.Title,
 		UploaderID: userID,
 		Type:       req.Type,
-		Size:       req.Size,
+		Size:       size,
 		Thumbnail:  req.Thumbnail,
 		Tags:       req.Tags,
+		AISummary:  summary,
+		Content:    req.Content,
 		CreatedAt:  time.Now().Unix(),
 	}
 
-	data, _ := json.Marshal(doc)
-	if err := database.Set([]byte("doc:"+doc.ID), data); err != nil {
+	if err := s.persistDoc(&doc); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create document"})
 		return
 	}
 
-	s.updateDocIndex()
 	c.JSON(http.StatusCreated, doc)
+}
+
+func (s *Service) persistDoc(doc *models.Document) error {
+	data, err := json.Marshal(doc)
+	if err != nil {
+		return err
+	}
+	if err := database.Set([]byte("doc:"+doc.ID), data); err != nil {
+		return err
+	}
+	s.updateDocIndex()
+	return nil
+}
+
+// SaveGenerated stores an AI-produced document (e.g. from chat). Tags may be nil.
+func (s *Service) SaveGenerated(title, content, uploaderID string, tags []string) (*models.Document, error) {
+	title = strings.TrimSpace(title)
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return nil, fmt.Errorf("empty content")
+	}
+	if title == "" {
+		title = "Untitled document"
+	}
+	if len(tags) == 0 {
+		tags = []string{"#ai", "#document"}
+	}
+	summary := content
+	if len(summary) > 320 {
+		summary = summary[:320] + "…"
+	}
+	doc := &models.Document{
+		ID:         uuid.New().String(),
+		Title:      title,
+		Content:    content,
+		AISummary:  summary,
+		UploaderID: uploaderID,
+		Type:       "markdown",
+		Size:       fmt.Sprintf("%d", len(content)),
+		Tags:       tags,
+		CreatedAt:  time.Now().Unix(),
+	}
+	if err := s.persistDoc(doc); err != nil {
+		return nil, err
+	}
+	return doc, nil
 }
 
 func (s *Service) GetDoc(c *gin.Context) {
@@ -94,9 +153,11 @@ func (s *Service) SearchDocs(c *gin.Context) {
 
 		match := true
 		if query != "" {
-			match = match && (strings.Contains(strings.ToLower(doc.Title), query) ||
-				strings.Contains(strings.ToLower(doc.AISummary), query) ||
-				s.tagsContain(doc.Tags, query))
+			q := strings.ToLower(query)
+			match = match && (strings.Contains(strings.ToLower(doc.Title), q) ||
+				strings.Contains(strings.ToLower(doc.AISummary), q) ||
+				strings.Contains(strings.ToLower(doc.Content), q) ||
+				s.tagsContain(doc.Tags, q))
 		}
 		if docType != "" {
 			match = match && strings.EqualFold(doc.Type, docType)

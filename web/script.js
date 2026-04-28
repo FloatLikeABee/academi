@@ -13,23 +13,20 @@ class AcademiApp {
         ];
         this.isTyping = false;
         this.messageId = 1;
+        this.apiBaseUrl = 'http://localhost:8978/api/v1';
+        this.authToken = localStorage.getItem('authToken') || null;
+        this.documentMode = localStorage.getItem('academi_document_mode') === '1';
+        this.researchEnabled = localStorage.getItem('academi_research') !== '0';
+        this.docsList = [];
+        this._statusResetTimer = null;
 
         this.init();
     }
 
     init() {
-        // Initialize screen visibility
-        document.querySelectorAll('.screen').forEach(screen => {
-            screen.style.display = 'none';
-        });
-        const chatScreen = document.getElementById('chatScreen');
-        if (chatScreen) {
-            chatScreen.style.display = 'block';
-        }
-
         this.bindEvents();
+        this.switchScreen('chat');
         this.renderMessages();
-        this.updateUI();
     }
 
     bindEvents() {
@@ -59,10 +56,36 @@ class AcademiApp {
 
         sendButton.addEventListener('click', () => this.sendMessage());
 
+        const docToggle = document.getElementById('documentModeToggle');
+        const researchToggle = document.getElementById('researchToggle');
+        if (docToggle) {
+            docToggle.checked = this.documentMode;
+            docToggle.addEventListener('change', () => {
+                this.documentMode = docToggle.checked;
+                localStorage.setItem('academi_document_mode', this.documentMode ? '1' : '0');
+            });
+        }
+        if (researchToggle) {
+            researchToggle.checked = this.researchEnabled;
+            researchToggle.addEventListener('change', () => {
+                this.researchEnabled = researchToggle.checked;
+                localStorage.setItem('academi_research', this.researchEnabled ? '1' : '0');
+            });
+        }
+
+        // Suggestions toggle
+        const suggestionsToggle = document.getElementById('suggestionsToggle');
+        if (suggestionsToggle) {
+            suggestionsToggle.addEventListener('click', () => {
+                this.toggleSuggestionsPanel();
+            });
+        }
+
         // Quick actions
         document.querySelectorAll('.quick-action-btn').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 const query = e.currentTarget.dataset.query;
+                this.toggleSuggestionsPanel();
                 this.sendMessage(query);
             });
         });
@@ -71,6 +94,7 @@ class AcademiApp {
         document.querySelectorAll('.tag-chip[data-topic]').forEach(tag => {
             tag.addEventListener('click', (e) => {
                 const topic = e.currentTarget.dataset.topic;
+                this.toggleSuggestionsPanel();
                 this.sendMessage(`Tell me about ${topic}`);
             });
         });
@@ -79,6 +103,17 @@ class AcademiApp {
         document.getElementById('themeToggle').addEventListener('click', () => {
             this.toggleTheme();
         });
+
+        const docSearch = document.getElementById('docSearch');
+        if (docSearch) {
+            docSearch.addEventListener('input', () => this.renderDocsGrid(docSearch.value.trim()));
+        }
+
+        const modal = document.getElementById('docModal');
+        const modalClose = document.getElementById('docModalClose');
+        const modalBackdrop = document.getElementById('docModalBackdrop');
+        if (modalClose) modalClose.addEventListener('click', () => this.closeDocModal());
+        if (modalBackdrop) modalBackdrop.addEventListener('click', () => this.closeDocModal());
     }
 
     switchScreen(screenName) {
@@ -91,21 +126,21 @@ class AcademiApp {
             activeTab.classList.add('active');
         }
 
-        // Update active screen - hide all screens first
         document.querySelectorAll('.screen').forEach(screen => {
-            screen.style.display = 'none';
             screen.classList.remove('active');
+            screen.style.removeProperty('display');
         });
 
-        // Show the selected screen
         const activeScreen = document.getElementById(`${screenName}Screen`);
         if (activeScreen) {
-            activeScreen.style.display = 'block';
             activeScreen.classList.add('active');
         }
 
         this.currentScreen = screenName;
         this.updateUI();
+        if (screenName === 'docs') {
+            this.loadDocs();
+        }
     }
 
     updateSendButton() {
@@ -123,14 +158,18 @@ class AcademiApp {
         textarea.style.height = Math.min(textarea.scrollHeight, 100) + 'px';
     }
 
+    toggleSuggestionsPanel() {
+        const panel = document.getElementById('suggestionsPanel');
+        const toggleBtn = document.getElementById('suggestionsToggle');
+        panel.classList.toggle('active');
+        toggleBtn.classList.toggle('active');
+    }
+
     async sendMessage(text = null) {
         const messageInput = document.getElementById('messageInput');
         const messageText = text || messageInput.value.trim();
 
         if (!messageText) return;
-
-        // Hide suggestions
-        document.getElementById('suggestions').style.display = 'none';
 
         // Add user message
         this.addMessage(messageText, true);
@@ -141,21 +180,30 @@ class AcademiApp {
         // Show typing indicator
         this.showTyping(true);
 
-        // Simulate AI response
-        setTimeout(() => {
-            const aiResponse = this.generateAIResponse(messageText);
-            this.addMessage(aiResponse, false);
-            this.showTyping(false);
-        }, 1500 + Math.random() * 1000);
+        // Call backend API (full history for multi-turn document agent)
+        try {
+            const response = await this.callAIChat();
+            this.addMessage(response.text, false, response.sources);
+            if (response.savedDocument) {
+                this.flashStatus(`Saved to Docs: ${response.savedDocument.title}`);
+                this.loadDocs();
+            }
+        } catch (error) {
+            console.error('AI chat error:', error);
+            this.addMessage('Sorry, I encountered an error. Please try again.', false, []);
+        }
+
+        this.showTyping(false);
     }
 
-    addMessage(text, isUser) {
+    addMessage(text, isUser, sources = []) {
         this.messageId++;
         const message = {
             id: this.messageId,
             text: text,
             isUser: isUser,
-            hasSource: !isUser && Math.random() > 0.5,
+            hasSource: !isUser && sources.length > 0,
+            sources: sources,
         };
 
         this.messages.push(message);
@@ -171,17 +219,27 @@ class AcademiApp {
             messageElement.className = `message ${message.isUser ? 'user-message' : 'ai-message'} fade-in`;
 
             let sourcesHtml = '';
-            if (message.hasSource) {
+            if (message.hasSource && message.sources && message.sources.length > 0) {
+                const iconFor = (t) => {
+                    if (t === 'wiki') return '⌁';
+                    if (t === 'paper') return '⧗';
+                    if (t === 'internal') return '⟲';
+                    return '⧉';
+                };
                 sourcesHtml = `
                     <div class="message-sources">
-                        <div class="source-item">
-                            <span class="source-icon">⟲</span>
-                            <span>Wikipedia - Quantum Physics</span>
-                        </div>
-                        <div class="source-item">
-                            <span class="source-icon">⧉</span>
-                            <span>Research Paper - 2023</span>
-                        </div>
+                        ${message.sources.map((source) => {
+                            const title = this.escapeHtml(source.title || '');
+                            const url = source.url ? String(source.url) : '';
+                            const inner = url
+                                ? `<a href="${this.escapeHtml(url)}" target="_blank" rel="noopener noreferrer" class="source-link">${title}</a>`
+                                : `<span>${title}</span>`;
+                            return `
+                            <div class="source-item">
+                                <span class="source-icon">${iconFor(source.type)}</span>
+                                ${inner}
+                            </div>`;
+                        }).join('')}
                     </div>
                 `;
             }
@@ -203,15 +261,168 @@ class AcademiApp {
             messagesContainer.appendChild(messageElement);
         });
 
-        // Scroll to bottom
-        setTimeout(() => {
-            messagesContainer.scrollTop = messagesContainer.scrollHeight;
-        }, 100);
+        const scrollRoot = document.getElementById('messagesContainer');
+        const scrollToBottom = () => {
+            if (scrollRoot) {
+                scrollRoot.scrollTop = scrollRoot.scrollHeight;
+            }
+        };
+        requestAnimationFrame(() => {
+            requestAnimationFrame(scrollToBottom);
+        });
+    }
+
+    escapeHtml(text) {
+        const d = document.createElement('div');
+        d.textContent = text;
+        return d.innerHTML;
     }
 
     formatMessage(text) {
-        // Simple formatting for bullet points
-        return text.replace(/•/g, '•');
+        return this.escapeHtml(text);
+    }
+
+    buildApiMessages() {
+        return this.messages.map((m) => ({
+            role: m.isUser ? 'user' : 'assistant',
+            content: m.text,
+        }));
+    }
+
+    async callAIChat() {
+        const headers = {
+            'Content-Type': 'application/json',
+        };
+
+        if (this.authToken) {
+            headers['Authorization'] = `Bearer ${this.authToken}`;
+        }
+
+        const response = await fetch(`${this.apiBaseUrl}/ai/chat`, {
+            method: 'POST',
+            headers: headers,
+            body: JSON.stringify({
+                messages: this.buildApiMessages(),
+                context: {},
+                document_mode: this.documentMode,
+                disable_research: this.documentMode ? !this.researchEnabled : true,
+            }),
+        });
+
+        if (!response.ok) {
+            const errBody = await response.json().catch(() => ({}));
+            throw new Error(errBody.error || 'Failed to get AI response');
+        }
+
+        const data = await response.json();
+        return {
+            text: data.response,
+            sources: data.sources || [],
+            savedDocument: data.saved_document || null,
+        };
+    }
+
+    flashStatus(msg) {
+        const statusText = document.getElementById('statusText');
+        if (!statusText) return;
+        if (this._statusResetTimer) clearTimeout(this._statusResetTimer);
+        statusText.textContent = msg;
+        this._statusResetTimer = setTimeout(() => {
+            this.updateUI();
+            this._statusResetTimer = null;
+        }, 4500);
+    }
+
+    async loadDocs() {
+        const grid = document.getElementById('docsGrid');
+        if (!grid) return;
+        try {
+            const headers = { Accept: 'application/json' };
+            if (this.authToken) headers['Authorization'] = `Bearer ${this.authToken}`;
+            const res = await fetch(`${this.apiBaseUrl}/docs`, { headers });
+            if (!res.ok) throw new Error('Failed to load docs');
+            this.docsList = await res.json();
+            const q = document.getElementById('docSearch')?.value?.trim() || '';
+            this.renderDocsGrid(q);
+        } catch (e) {
+            console.error(e);
+            this.docsList = [];
+            this.renderDocsGrid('');
+        }
+    }
+
+    renderDocsGrid(query) {
+        const grid = document.getElementById('docsGrid');
+        const emptyEl = document.getElementById('docsEmpty');
+        if (!grid) return;
+        grid.querySelectorAll('.doc-card').forEach((n) => n.remove());
+
+        const q = (query || '').toLowerCase();
+        let list = this.docsList;
+        if (q) {
+            list = this.docsList.filter((d) => {
+                const blob = `${d.title || ''} ${d.ai_summary || ''} ${d.content || ''} ${(d.tags || []).join(' ')}`.toLowerCase();
+                return blob.includes(q);
+            });
+        }
+
+        if (!list.length) {
+            if (emptyEl) emptyEl.hidden = false;
+            return;
+        }
+        if (emptyEl) emptyEl.hidden = true;
+
+        const sorted = [...list].sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
+        for (const doc of sorted) {
+            const card = document.createElement('div');
+            card.className = 'doc-card glass';
+            card.setAttribute('role', 'button');
+            card.dataset.docId = doc.id;
+            const tags = (doc.tags || []).slice(0, 6).map((t) => `<span class="tag-chip">${this.escapeHtml(t)}</span>`).join('');
+            const rawSum = doc.ai_summary || (doc.content ? String(doc.content).slice(0, 220) : '') || '';
+            const summary = this.escapeHtml(rawSum);
+            const truncated = (doc.content && doc.content.length > 220) || (doc.ai_summary && doc.ai_summary.length > 220);
+            const title = this.escapeHtml(doc.title || 'Untitled');
+            card.innerHTML = `
+                <div class="doc-preview"><div class="doc-icon">⧉</div></div>
+                <div class="doc-info">
+                    <h4>${title}</h4>
+                    <p>${summary}${truncated ? '…' : ''}</p>
+                    <div class="doc-tags truncated">${tags}</div>
+                </div>
+            `;
+            card.addEventListener('click', () => this.openDocModal(doc.id));
+            grid.appendChild(card);
+        }
+    }
+
+    async openDocModal(docId) {
+        let doc = this.docsList.find((d) => d.id === docId);
+        const modal = document.getElementById('docModal');
+        const titleEl = document.getElementById('docModalTitle');
+        const bodyEl = document.getElementById('docModalBody');
+        if (!modal || !titleEl || !bodyEl) return;
+
+        if (!doc || !doc.content) {
+            try {
+                const headers = { Accept: 'application/json' };
+                if (this.authToken) headers['Authorization'] = `Bearer ${this.authToken}`;
+                const res = await fetch(`${this.apiBaseUrl}/docs/${encodeURIComponent(docId)}`, { headers });
+                if (res.ok) doc = await res.json();
+            } catch (e) {
+                console.error(e);
+            }
+        }
+        if (!doc) return;
+
+        titleEl.textContent = doc.title || 'Document';
+        bodyEl.textContent = doc.content || doc.ai_summary || '(No body)';
+        modal.hidden = false;
+    }
+
+    closeDocModal() {
+        const modal = document.getElementById('docModal');
+        if (modal) modal.hidden = true;
     }
 
     generateAIResponse(query) {

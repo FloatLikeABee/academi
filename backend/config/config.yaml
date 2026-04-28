@@ -22,5 +22,4 @@ cache:
 
 cors:
   origins:
-    - "http://localhost:3000"
-    - "http://localhost:8081"
+    - "*"

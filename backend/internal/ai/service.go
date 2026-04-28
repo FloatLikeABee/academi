@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 
@@ -13,6 +14,8 @@ import (
 	"github.com/academi/backend/internal/auth"
 	"github.com/academi/backend/internal/config"
 	"github.com/academi/backend/internal/database"
+	docs "github.com/academi/backend/internal/docs"
+	"github.com/academi/backend/internal/research"
 )
 
 type Service struct {
@@ -44,11 +47,16 @@ type ChatCompletionResponse struct {
 type SourceReference struct {
 	Title string `json:"title"`
 	Type  string `json:"type"`
+	URL   string `json:"url,omitempty"`
 }
 
 type ChatRequest struct {
-	Message string            `json:"message" binding:"required"`
-	Context map[string]string `json:"context"`
+	Message          string            `json:"message"`
+	Context          map[string]string `json:"context"`
+	AIProvider       string            `json:"ai_provider"`
+	Messages         []ChatMessage     `json:"messages"`
+	DocumentMode     bool              `json:"document_mode"`
+	DisableResearch  bool              `json:"disable_research"`
 }
 
 type SummarizeRequest struct {
@@ -68,12 +76,35 @@ func NewService(cfg *config.Config) *Service {
 	return &Service{cfg: cfg}
 }
 
+func (s *Service) getProvider(providerName string) (*config.AIProvider, error) {
+	if providerName == "" {
+		providerName = s.cfg.AI.DefaultProvider
+	}
+
+	provider, exists := s.cfg.AI.Providers[providerName]
+	if !exists {
+		return nil, fmt.Errorf("AI provider '%s' not found", providerName)
+	}
+
+	if provider.APIKey == "" {
+		return nil, fmt.Errorf("API key not configured for provider '%s'", providerName)
+	}
+
+	return &provider, nil
+}
+
 func (s *Service) Chat(userMessage string, context map[string]string) (string, error) {
+	return s.ChatWithProvider(userMessage, context, "")
+}
+
+func (s *Service) ChatWithProvider(userMessage string, context map[string]string, providerName string) (string, error) {
+	provider, err := s.getProvider(providerName)
+	if err != nil {
+		return "", err
+	}
+
 	messages := []ChatMessage{
-		{
-			Role:    "system",
-			Content: "You are Academi AI, an academic assistant. Provide clear, accurate, and well-structured responses. Use bullet points and numbered lists when helpful. Keep responses concise but thorough.",
-		},
+		{Role: "system", Content: systemDefault},
 	}
 
 	for key, value := range context {
@@ -88,11 +119,15 @@ func (s *Service) Chat(userMessage string, context map[string]string) (string, e
 		Content: userMessage,
 	})
 
+	return s.completeChat(provider, messages)
+}
+
+func (s *Service) completeChat(provider *config.AIProvider, messages []ChatMessage) (string, error) {
 	reqBody := ChatCompletionRequest{
-		Model:       s.cfg.AI.Model,
+		Model:       provider.Model,
 		Messages:    messages,
-		MaxTokens:   s.cfg.AI.MaxTokens,
-		Temperature: s.cfg.AI.Temperature,
+		MaxTokens:   provider.MaxTokens,
+		Temperature: provider.Temperature,
 	}
 
 	jsonData, err := json.Marshal(reqBody)
@@ -100,13 +135,15 @@ func (s *Service) Chat(userMessage string, context map[string]string) (string, e
 		return "", fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	req, err := http.NewRequest("POST", s.cfg.AI.BaseURL+"/chat/completions", bytes.NewBuffer(jsonData))
+	req, err := http.NewRequest("POST", provider.BaseURL+"/chat/completions", bytes.NewBuffer(jsonData))
 	if err != nil {
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+s.cfg.AI.APIKey)
+	if provider.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+provider.APIKey)
+	}
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
@@ -120,16 +157,151 @@ func (s *Service) Chat(userMessage string, context map[string]string) (string, e
 		return "", fmt.Errorf("failed to read response: %w", err)
 	}
 
+	log.Printf("AI Response Status: %d, Body: %s", resp.StatusCode, string(body))
+
 	var completion ChatCompletionResponse
 	if err := json.Unmarshal(body, &completion); err != nil {
 		return "", fmt.Errorf("failed to parse response: %w", err)
 	}
 
 	if len(completion.Choices) == 0 {
-		return "", fmt.Errorf("no choices in response")
+		return "", fmt.Errorf("no choices in response, body: %s", string(body))
 	}
 
 	return completion.Choices[0].Message.Content, nil
+}
+
+func lastUserSnippet(req ChatRequest) string {
+	if strings.TrimSpace(req.Message) != "" {
+		return strings.TrimSpace(req.Message)
+	}
+	for i := len(req.Messages) - 1; i >= 0; i-- {
+		if strings.EqualFold(strings.TrimSpace(req.Messages[i].Role), "user") && strings.TrimSpace(req.Messages[i].Content) != "" {
+			return strings.TrimSpace(req.Messages[i].Content)
+		}
+	}
+	return ""
+}
+
+func firstUserSnippet(req ChatRequest) string {
+	if len(req.Messages) == 0 {
+		return ""
+	}
+	for _, m := range req.Messages {
+		if strings.EqualFold(strings.TrimSpace(m.Role), "user") && strings.TrimSpace(m.Content) != "" {
+			return strings.TrimSpace(m.Content)
+		}
+	}
+	return ""
+}
+
+func researchQueryFromThread(req ChatRequest) string {
+	last := lastUserSnippet(req)
+	first := firstUserSnippet(req)
+	if first != "" && last != "" && first != last && len(first)+len(last) < 500 {
+		return first + " | " + last
+	}
+	return last
+}
+
+func clipConversation(msgs []ChatMessage, maxMessages int) []ChatMessage {
+	if maxMessages <= 0 || len(msgs) <= maxMessages {
+		out := make([]ChatMessage, len(msgs))
+		copy(out, msgs)
+		return out
+	}
+	return append([]ChatMessage{}, msgs[len(msgs)-maxMessages:]...)
+}
+
+func (s *Service) buildChatPayload(req ChatRequest) ([]ChatMessage, []SourceReference, error) {
+	sys := systemDefault
+	if req.DocumentMode {
+		sys = systemDocumentAgent
+	}
+
+	out := []ChatMessage{{Role: "system", Content: sys}}
+
+	for key, value := range req.Context {
+		if strings.TrimSpace(value) == "" {
+			continue
+		}
+		out = append(out, ChatMessage{
+			Role:    "system",
+			Content: fmt.Sprintf("Context — %s: %s", key, value),
+		})
+	}
+
+	var researchSources []SourceReference
+	if req.DocumentMode && !req.DisableResearch {
+		if q := researchQueryFromThread(req); q != "" {
+			if notes, srcs := research.Gather(q); notes != "" {
+				out = append(out, ChatMessage{
+					Role:    "system",
+					Content: "Research notes (public sources; verify — may be incomplete):\n\n" + notes,
+				})
+				for _, rs := range srcs {
+					researchSources = append(researchSources, SourceReference{
+						Title: rs.Title,
+						Type:  rs.Type,
+						URL:   rs.URL,
+					})
+				}
+			}
+		}
+	}
+
+	if len(req.Messages) > 0 {
+		convo := clipConversation(req.Messages, 48)
+		for _, m := range convo {
+			role := strings.ToLower(strings.TrimSpace(m.Role))
+			if role != "user" && role != "assistant" {
+				continue
+			}
+			out = append(out, ChatMessage{Role: role, Content: m.Content})
+		}
+	}
+
+	if msg := strings.TrimSpace(req.Message); msg != "" {
+		if len(out) == 0 || out[len(out)-1].Role != "user" || out[len(out)-1].Content != msg {
+			out = append(out, ChatMessage{Role: "user", Content: msg})
+		}
+	}
+
+	hasUser := false
+	for _, m := range out {
+		if m.Role == "user" {
+			hasUser = true
+			break
+		}
+	}
+	if !hasUser {
+		return nil, nil, fmt.Errorf("no user messages to process")
+	}
+
+	return out, researchSources, nil
+}
+
+func (s *Service) ChatWithMessages(req ChatRequest) (string, []SourceReference, error) {
+	payload, researchSources, err := s.buildChatPayload(req)
+	if err != nil {
+		return "", nil, err
+	}
+
+	provider, err := s.getProvider(req.AIProvider)
+	if err != nil {
+		return "", nil, err
+	}
+
+	reply, err := s.completeChat(provider, payload)
+	if err != nil {
+		return "", nil, err
+	}
+
+	sources := researchSources
+	if len(sources) == 0 {
+		sources = []SourceReference{{Title: "Academi", Type: "internal"}}
+	}
+	return reply, sources, nil
 }
 
 func (s *Service) ChatHandler(c *gin.Context) {
@@ -139,36 +311,43 @@ func (s *Service) ChatHandler(c *gin.Context) {
 		return
 	}
 
-	userID := auth.GetUserID(c)
 	if req.Context == nil {
 		req.Context = make(map[string]string)
 	}
-	req.Context["user_id"] = userID
 
-	settingsData, _ := database.Get([]byte("settings:" + userID))
-	if settingsData != nil {
-		var settings map[string]interface{}
-		json.Unmarshal(settingsData, &settings)
-		if tone, ok := settings["ai_tone"].(string); ok {
-			req.Context["tone"] = tone
-		}
-		if depth, ok := settings["ai_depth"].(string); ok {
-			req.Context["depth"] = depth
-		}
+	if strings.TrimSpace(req.Message) == "" && len(req.Messages) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "message or messages required"})
+		return
 	}
 
-	response, err := s.Chat(req.Message, req.Context)
+	response, sources, err := s.ChatWithMessages(req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"response": response,
-		"sources": []SourceReference{
-			{Title: "Academi Knowledge Base", Type: "internal"},
-		},
-	})
+	display := response
+	out := gin.H{
+		"response":      display,
+		"sources":       sources,
+		"document_mode": req.DocumentMode,
+	}
+
+	if req.DocumentMode {
+		if d, title, body, ok := parseAcademiDoc(response); ok {
+			display = d
+			out["response"] = display
+			docSvc := docs.NewService()
+			saved, saveErr := docSvc.SaveGenerated(title, body, auth.GetUserID(c), nil)
+			if saveErr != nil {
+				log.Printf("save AI document: %v", saveErr)
+			} else if saved != nil {
+				out["saved_document"] = gin.H{"id": saved.ID, "title": saved.Title}
+			}
+		}
+	}
+
+	c.JSON(http.StatusOK, out)
 }
 
 func (s *Service) SummarizeHandler(c *gin.Context) {
@@ -260,9 +439,27 @@ func (s *Service) SearchDocs(query string, tone string, depth string) (string, e
 	return s.Chat("Find relevant information for this query: "+query, context)
 }
 
+func (s *Service) ProvidersHandler(c *gin.Context) {
+	providers := make([]gin.H, 0)
+	for key, provider := range s.cfg.AI.Providers {
+		providers = append(providers, gin.H{
+			"id":          key,
+			"name":        provider.Name,
+			"model":       provider.Model,
+			"has_api_key": provider.APIKey != "",
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"default_provider": s.cfg.AI.DefaultProvider,
+		"providers":        providers,
+	})
+}
+
 func (s *Service) RegisterRoutes(r *gin.RouterGroup) {
 	ai := r.Group("/ai")
 	{
+		ai.GET("/providers", s.ProvidersHandler)
 		ai.POST("/chat", s.ChatHandler)
 		ai.POST("/summarize", s.SummarizeHandler)
 		ai.POST("/generate-guide", s.GenerateGuideHandler)

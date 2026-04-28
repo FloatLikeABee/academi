@@ -34,6 +34,12 @@
     box-sizing: border-box;
 }
 
+html,
+body {
+    height: 100%;
+    overflow: hidden;
+}
+
 body {
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     background-color: var(--bg-primary);
@@ -106,6 +112,7 @@ body {
 /* Main Content */
 .main-content {
     flex: 1;
+    min-height: 0;
     overflow: hidden;
     position: relative;
 }
@@ -113,6 +120,7 @@ body {
 .screen {
     display: none;
     height: 100%;
+    min-height: 0;
     overflow-y: auto;
     padding-bottom: var(--space-6);
 }
@@ -121,19 +129,127 @@ body {
     display: block;
 }
 
-/* Chat Screen */
-.chat-screen {
+/* Chat toolbar (document agent + research toggles) */
+.chat-toolbar {
+    flex-shrink: 0;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-3) var(--space-4);
+    padding: var(--space-2) var(--space-4);
+    background-color: var(--bg-secondary);
+    border-bottom: 1px solid var(--border-subtle);
+}
+
+.toolbar-label {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: 11px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    user-select: none;
+}
+
+.toolbar-label input {
+    accent-color: var(--primary);
+    width: 16px;
+    height: 16px;
+    margin: 0;
+}
+
+.toolbar-label span {
+    line-height: 1.2;
+}
+
+/* Chat: column layout — only when active so display:none from .screen is not overridden */
+.screen.chat-screen.active {
     display: flex;
     flex-direction: column;
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+    position: relative;
+    padding-bottom: 0;
 }
 
 .messages-container {
-    flex: 1;
+    flex: 1 1 0;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
     padding: var(--space-4);
+    padding-bottom: var(--space-4);
+}
+
+.message-content p {
+    white-space: pre-wrap;
+    word-break: break-word;
 }
 
 .suggestions {
     margin-bottom: var(--space-4);
+}
+
+.suggestions-panel {
+    position: fixed;
+    bottom: 120px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: calc(100% - 48px);
+    max-width: 342px;
+    background-color: var(--bg-secondary);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    padding: var(--space-4);
+    z-index: 200;
+    display: none;
+    backdrop-filter: blur(20px);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+.suggestions-panel.active {
+    display: block;
+    animation: slideUp 0.3s ease-out;
+}
+
+@keyframes slideUp {
+    from {
+        opacity: 0;
+        transform: translateX(-50%) translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(-50%) translateY(0);
+    }
+}
+
+.suggestions-toggle-btn {
+    width: 36px;
+    height: 36px;
+    border-radius: 18px;
+    background-color: var(--surface-glass);
+    border: 1px solid var(--border-subtle);
+    color: var(--text-secondary);
+    font-size: 18px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-right: var(--space-2);
+}
+
+.suggestions-toggle-btn:hover {
+    background-color: rgba(255, 255, 255, 0.08);
+    color: var(--primary);
+}
+
+.suggestions-toggle-btn.active {
+    background-color: var(--primary);
+    color: var(--text-primary);
+    border-color: var(--primary);
 }
 
 .section-title {
@@ -246,6 +362,13 @@ body {
     color: var(--text-secondary);
 }
 
+a.source-link {
+    color: var(--primary);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    word-break: break-all;
+}
+
 .source-icon {
     font-size: 14px;
 }
@@ -276,18 +399,25 @@ body {
 
 /* Typing Indicator */
 .typing-indicator {
+    position: absolute;
+    bottom: 80px;
+    left: 16px;
     display: flex;
     align-items: center;
-    padding: 0 var(--space-5) var(--space-2);
-    gap: var(--space-2);
-    color: var(--primary);
-    font-size: 12px;
-    font-weight: 500;
+    gap: 8px;
+    padding: var(--space-3);
+    color: var(--text-secondary);
+    font-size: 13px;
+    z-index: 10;
 }
 
 /* Input Area */
 .input-area {
-    padding: 0 var(--space-3) var(--space-3);
+    flex-shrink: 0;
+    padding: var(--space-3);
+    padding-bottom: max(var(--space-3), env(safe-area-inset-bottom, 0px));
+    background-color: var(--bg-primary);
+    border-top: 1px solid var(--border-subtle);
 }
 
 .input-wrapper {
@@ -446,11 +576,96 @@ body {
     cursor: pointer;
 }
 
+.docs-empty {
+    grid-column: 1 / -1;
+    text-align: center;
+    color: var(--text-secondary);
+    font-size: 14px;
+    padding: var(--space-6) var(--space-4);
+    line-height: 1.5;
+}
+
 .docs-grid {
     padding: var(--space-4);
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
     gap: var(--space-4);
+}
+
+.doc-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 300;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+}
+
+.doc-modal[hidden] {
+    display: none !important;
+}
+
+.doc-modal-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(4px);
+}
+
+.doc-modal-panel {
+    position: relative;
+    width: 100%;
+    max-width: 390px;
+    max-height: 85vh;
+    margin: 0 auto;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 -8px 40px rgba(0, 0, 0, 0.45);
+}
+
+.doc-modal-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-3);
+    padding: var(--space-4);
+    border-bottom: 1px solid var(--border-subtle);
+}
+
+.doc-modal-header h3 {
+    font-size: 16px;
+    font-weight: 600;
+    line-height: 1.3;
+    margin: 0;
+}
+
+.doc-modal-close {
+    flex-shrink: 0;
+    width: 36px;
+    height: 36px;
+    border: none;
+    border-radius: var(--radius-md);
+    background: var(--surface-glass);
+    color: var(--text-secondary);
+    font-size: 18px;
+    cursor: pointer;
+}
+
+.doc-modal-body {
+    margin: 0;
+    padding: var(--space-4);
+    overflow: auto;
+    font-family: inherit;
+    font-size: 13px;
+    line-height: 1.55;
+    color: var(--text-primary);
+    white-space: pre-wrap;
+    word-break: break-word;
+    flex: 1;
+    min-height: 120px;
 }
 
 .doc-card {
@@ -697,32 +912,35 @@ body {
 /* Tab Bar */
 .tab-bar {
     display: flex;
+    align-items: stretch;
     background-color: var(--bg-secondary);
     border-top: 1px solid var(--border-subtle);
-    height: 80px;
-    padding-bottom: 16px;
+    min-height: 80px;
     padding-top: 8px;
+    padding-bottom: max(16px, env(safe-area-inset-bottom, 0px));
+    overflow: visible;
 }
 
 .tab-btn {
-    flex: 1;
+    flex: 1 1 0;
+    min-width: 0;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
+    gap: 4px;
+    padding: 0 2px;
     background: none;
     border: none;
     color: var(--text-secondary);
-    font-size: 11px;
     cursor: pointer;
-    transition: all 0.2s ease;
+    transition: color 0.2s ease, filter 0.2s ease;
     border-radius: 20px;
-    margin: 0 var(--space-1);
+    overflow: visible;
 }
 
 .tab-btn.active {
     color: var(--primary);
-    transform: scale(1.1);
 }
 
 .tab-btn.active .tab-icon {
@@ -730,18 +948,32 @@ body {
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
-    filter: drop-shadow(0 0 8px var(--primary)) drop-shadow(0 0 16px var(--secondary));
-    text-shadow: 0 0 10px var(--primary), 0 0 20px var(--secondary);
+    filter: drop-shadow(0 0 6px var(--primary)) drop-shadow(0 0 12px var(--secondary));
+    animation: iconGlow 2s ease-in-out infinite alternate;
 }
 
+/* Fixed slot so mixed Unicode icons share one baseline row */
 .tab-icon {
-    font-size: 20px;
-    margin-bottom: 2px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
+    font-size: 18px;
+    line-height: 1;
+    margin: 0;
 }
 
 .tab-label {
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 500;
+    line-height: 1.15;
+    text-align: center;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 /* Responsive Design */
@@ -782,13 +1014,16 @@ body {
 }
 
 .tab-btn.active .tab-icon {
-    text-shadow: 0 0 8px var(--primary), 0 0 16px var(--secondary), 0 0 24px var(--tertiary);
-    animation: iconGlow 2s ease-in-out infinite alternate;
+    text-shadow: none;
 }
 
 @keyframes iconGlow {
-    from { text-shadow: 0 0 8px var(--primary), 0 0 16px var(--secondary), 0 0 24px var(--tertiary); }
-    to { text-shadow: 0 0 12px var(--primary), 0 0 20px var(--secondary), 0 0 32px var(--tertiary); }
+    from {
+        filter: drop-shadow(0 0 4px var(--primary)) drop-shadow(0 0 10px var(--secondary));
+    }
+    to {
+        filter: drop-shadow(0 0 8px var(--primary)) drop-shadow(0 0 14px var(--secondary));
+    }
 }
 
 .avatar {

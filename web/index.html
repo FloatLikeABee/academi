@@ -24,36 +24,22 @@
         <main class="main-content" id="mainContent">
             <!-- Chat Screen (Default) -->
             <div class="screen chat-screen active" id="chatScreen">
+                <div class="chat-toolbar" id="chatToolbar">
+                    <label class="toolbar-label" title="Asks clarifying questions before drafting; uses research when enabled">
+                        <input type="checkbox" id="documentModeToggle" />
+                        <span>Document agent</span>
+                    </label>
+                    <label class="toolbar-label" title="Wikipedia, DuckDuckGo summaries, arXiv (no API keys)">
+                        <input type="checkbox" id="researchToggle" checked />
+                        <span>Research</span>
+                    </label>
+                </div>
                 <div class="messages-container" id="messagesContainer">
-                    <!-- Suggestions -->
-                    <div class="suggestions" id="suggestions">
-                        <div class="suggestions-section">
-                            <h3 class="section-title">Quick Actions</h3>
-                            <div class="quick-actions">
-                                <button class="quick-action-btn" data-query="Summarize this topic">⟐ Summarize</button>
-                                <button class="quick-action-btn" data-query="Explain in detail">⍰ Explain</button>
-                                <button class="quick-action-btn" data-query="Create a study plan">⟑ Study Plan</button>
-                                <button class="quick-action-btn" data-query="Give me examples">⏣ Examples</button>
-                            </div>
-                        </div>
-                        <div class="suggestions-section">
-                            <h3 class="section-title">Suggested Topics</h3>
-                            <div class="topic-tags">
-                                <span class="tag-chip glow" data-topic="#math">math</span>
-                                <span class="tag-chip glow" data-topic="#physics">physics</span>
-                                <span class="tag-chip glow" data-topic="#cs">cs</span>
-                                <span class="tag-chip glow" data-topic="#biology">biology</span>
-                                <span class="tag-chip glow" data-topic="#chemistry">chemistry</span>
-                                <span class="tag-chip glow" data-topic="#quantum">quantum</span>
-                            </div>
-                        </div>
-                    </div>
-
                     <!-- Messages -->
                     <div class="messages" id="messages">
                         <div class="message ai-message">
                             <div class="message-content">
-                                <p>Hello! I'm Academi, your AI study assistant. Ask me anything or pick a topic below!</p>
+                                <p>Hello! I'm Academi, your AI study assistant. Ask me anything or use the ⚡ button for quick actions!</p>
                             </div>
                         </div>
                     </div>
@@ -68,15 +54,42 @@
                 <!-- Input Area -->
                 <div class="input-area">
                     <div class="input-wrapper">
+                        <button id="suggestionsToggle" class="suggestions-toggle-btn" title="Quick Actions">
+                            <span>⚡</span>
+                        </button>
                         <textarea
                             id="messageInput"
                             placeholder="Ask Academi anything..."
-                            maxlength="500"
+                            maxlength="12000"
                             rows="1"
                         ></textarea>
                         <button id="sendButton" class="send-btn" disabled>
                             <span>▶</span>
                         </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Suggestions Panel (Modal) - Outside chat screen -->
+            <div class="suggestions-panel" id="suggestionsPanel">
+                <div class="suggestions-section">
+                    <h3 class="section-title">Quick Actions</h3>
+                    <div class="quick-actions">
+                        <button class="quick-action-btn" data-query="Summarize this topic">⟐ Summarize</button>
+                        <button class="quick-action-btn" data-query="Explain in detail">⍰ Explain</button>
+                        <button class="quick-action-btn" data-query="Create a study plan">⟑ Study Plan</button>
+                        <button class="quick-action-btn" data-query="Give me examples">⏣ Examples</button>
+                    </div>
+                </div>
+                <div class="suggestions-section">
+                    <h3 class="section-title">Suggested Topics</h3>
+                    <div class="topic-tags">
+                        <span class="tag-chip glow" data-topic="#math">math</span>
+                        <span class="tag-chip glow" data-topic="#physics">physics</span>
+                        <span class="tag-chip glow" data-topic="#cs">cs</span>
+                        <span class="tag-chip glow" data-topic="#biology">biology</span>
+                        <span class="tag-chip glow" data-topic="#chemistry">chemistry</span>
+                        <span class="tag-chip glow" data-topic="#quantum">quantum</span>
                     </div>
                 </div>
             </div>
@@ -112,25 +125,8 @@
                     <input type="text" placeholder="Search documents..." id="docSearch">
                     <button class="search-btn">⟲</button>
                 </div>
-                <div class="docs-grid">
-                    <div class="doc-card glass">
-                        <div class="doc-preview">
-                            <div class="doc-icon">⧉</div>
-                        </div>
-                        <div class="doc-info">
-                            <h4>Quantum Mechanics Notes</h4>
-                            <p>Comprehensive study guide covering wave functions, uncertainty principle, and quantum entanglement</p>
-                            <div class="doc-tags truncated">
-                                <span class="tag-chip">#physics</span>
-                                <span class="tag-chip">#quantum</span>
-                                <span class="tag-chip">#math</span>
-                                <span class="tag-chip">#science</span>
-                                <span class="tag-chip">#research</span>
-                                <span class="tag-chip">#advanced</span>
-                            </div>
-                        </div>
-                    </div>
-                    <!-- More docs -->
+                <div class="docs-grid" id="docsGrid">
+                    <p class="docs-empty" id="docsEmpty">No documents yet. Turn on <strong>Document agent</strong> in Chat and ask for a doc — it will appear here when the AI finishes.</p>
                 </div>
             </div>
 
@@ -217,6 +213,17 @@
                 <span class="tab-label">Profile</span>
             </button>
         </nav>
+    </div>
+
+    <div class="doc-modal" id="docModal" hidden>
+        <div class="doc-modal-backdrop" id="docModalBackdrop"></div>
+        <div class="doc-modal-panel" role="dialog" aria-labelledby="docModalTitle">
+            <div class="doc-modal-header">
+                <h3 id="docModalTitle"></h3>
+                <button type="button" class="doc-modal-close" id="docModalClose" aria-label="Close">✕</button>
+            </div>
+            <pre class="doc-modal-body" id="docModalBody"></pre>
+        </div>
     </div>
 
     <script src="script.js"></script>

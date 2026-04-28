@@ -214,9 +214,29 @@ export default function ChatScreen() {
       color: theme.colors.textSecondary,
       fontSize: 12,
     },
+    suggestionsToggle: {
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+      borderRadius: 16,
+      backgroundColor: theme.colors.surfaceGlass,
+      borderWidth: 1,
+      borderColor: theme.colors.borderSubtle,
+    },
+    suggestionsToggleText: {
+      color: theme.colors.textPrimary,
+      fontSize: 12,
+      fontWeight: '600',
+    },
     messagesContainer: {
       padding: 16,
       paddingBottom: 16,
+      flexGrow: 1,
+    },
+    flatList: {
+      flex: 1,
+    },
+    chatContent: {
+      flex: 1,
     },
     suggestionsContainer: {
       marginBottom: 16,
@@ -310,6 +330,15 @@ export default function ChatScreen() {
       <View style={themedStyles.header}>
         <Text style={themedStyles.headerTitle}>Academi AI</Text>
         <View style={themedStyles.headerRight}>
+          <TouchableOpacity
+            onPress={() => setShowSuggestions(!showSuggestions)}
+            style={themedStyles.suggestionsToggle}
+            activeOpacity={0.7}
+          >
+            <Text style={themedStyles.suggestionsToggleText}>
+              {showSuggestions ? 'Hide' : 'Show'} Tips
+            </Text>
+          </TouchableOpacity>
           <NeuralGlow isActive={isTyping} size={6} />
           <Text style={themedStyles.headerStatus}>
             {isTyping ? 'Thinking...' : 'Online'}
@@ -317,19 +346,22 @@ export default function ChatScreen() {
         </View>
       </View>
 
-      <FlatList
-        ref={flatListRef}
-        data={messages}
-        keyExtractor={item => item.id.toString()}
-        renderItem={renderMessage}
-        contentContainerStyle={themedStyles.messagesContainer}
-        ListHeaderComponent={renderSuggestions}
-        onContentSizeChange={() => {
-          flatListRef.current?.scrollToEnd({ animated: true });
-        }}
-      />
+      <View style={themedStyles.chatContent}>
+        <FlatList
+          ref={flatListRef}
+          data={messages}
+          keyExtractor={item => item.id.toString()}
+          renderItem={renderMessage}
+          contentContainerStyle={themedStyles.messagesContainer}
+          ListHeaderComponent={renderSuggestions}
+          style={themedStyles.flatList}
+          onContentSizeChange={() => {
+            flatListRef.current?.scrollToEnd({ animated: true });
+          }}
+        />
 
-      {renderTypingIndicator()}
+        {renderTypingIndicator()}
+      </View>
 
       <View style={themedStyles.inputContainer}>
         <View style={themedStyles.glassInputWrapper}>

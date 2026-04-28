@@ -9,6 +9,7 @@ type Document struct {
 	Thumbnail  string   `json:"thumbnail"`
 	Tags       []string `json:"tags"`
 	AISummary  string   `json:"ai_summary"`
+	Content    string   `json:"content"`
 	CreatedAt  int64    `json:"created_at"`
 }
 
@@ -18,6 +19,8 @@ type CreateDocRequest struct {
 	Size      string   `json:"size"`
 	Thumbnail string   `json:"thumbnail"`
 	Tags      []string `json:"tags"`
+	Content   string   `json:"content"`
+	AISummary string   `json:"ai_summary"`
 }
 
 type SearchResponse struct {

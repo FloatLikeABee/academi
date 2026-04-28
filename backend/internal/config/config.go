@@ -32,12 +32,18 @@ type JWTConfig struct {
 	ExpiryHours int
 }
 
-type AIConfig struct {
+type AIProvider struct {
+	Name        string
 	APIKey      string
 	BaseURL     string
 	Model       string
 	MaxTokens   int
 	Temperature float64
+}
+
+type AIConfig struct {
+	DefaultProvider string
+	Providers      map[string]AIProvider
 }
 
 type CacheConfig struct {
@@ -70,17 +76,55 @@ func Load() *Config {
 				ExpiryHours: 24,
 			},
 			AI: AIConfig{
-				APIKey:      getEnv("AI_API_KEY", ""),
-				BaseURL:     getEnv("AI_BASE_URL", "https://api.openai.com/v1"),
-				Model:       getEnv("AI_MODEL", "gpt-4"),
-				MaxTokens:   2048,
-				Temperature: 0.7,
+				DefaultProvider: getEnv("AI_DEFAULT_PROVIDER", "openai"),
+				Providers: map[string]AIProvider{
+					"openai": {
+						Name:        "OpenAI",
+						APIKey:      getEnv("OPENAI_API_KEY", ""),
+						BaseURL:     getEnv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+						Model:       getEnv("OPENAI_MODEL", "gpt-4"),
+						MaxTokens:   2048,
+						Temperature: 0.7,
+					},
+					"anthropic": {
+						Name:        "Anthropic",
+						APIKey:      getEnv("ANTHROPIC_API_KEY", ""),
+						BaseURL:     getEnv("ANTHROPIC_BASE_URL", "https://api.anthropic.com/v1"),
+						Model:       getEnv("ANTHROPIC_MODEL", "claude-3-opus-20240229"),
+						MaxTokens:   4096,
+						Temperature: 0.7,
+					},
+					"azure": {
+						Name:        "Azure OpenAI",
+						APIKey:      getEnv("AZURE_OPENAI_API_KEY", ""),
+						BaseURL:     getEnv("AZURE_OPENAI_BASE_URL", ""),
+						Model:       getEnv("AZURE_OPENAI_MODEL", "gpt-4"),
+						MaxTokens:   2048,
+						Temperature: 0.7,
+					},
+					"ollama": {
+						Name:        "Ollama",
+						APIKey:      getEnv("OLLAMA_API_KEY", ""),
+						BaseURL:     getEnv("OLLAMA_BASE_URL", "http://localhost:11434/v1"),
+						Model:       getEnv("OLLAMA_MODEL", "llama2"),
+						MaxTokens:   2048,
+						Temperature: 0.7,
+					},
+					"qwen": {
+						Name:        "Qwen",
+						APIKey:      getEnv("QWEN_API_KEY", ""),
+						BaseURL:     getEnv("QWEN_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+						Model:       getEnv("QWEN_MODEL", "qwen-turbo"),
+						MaxTokens:   2048,
+						Temperature: 0.7,
+					},
+				},
 			},
 			Cache: CacheConfig{
 				DefaultTTL: 3600,
 			},
 			CORS: CORSConfig{
-				Origins: []string{"http://localhost:3000", "http://localhost:8081"},
+				Origins: []string{"*"},
 			},
 		}
 	})

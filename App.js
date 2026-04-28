@@ -15,15 +15,15 @@ const Tab = createBottomTabNavigator();
 
 function TabBarIcon({ name, focused, color }) {
   const icons = {
-    Chat: '⌨',
-    Community: '⟲',
-    Docs: '⧉',
-    Guide: '⚙',
-    Profile: '◉',
+    Chat: '💬',
+    Community: '👥',
+    Docs: '📄',
+    Guide: '📚',
+    Profile: '👤',
   };
   return (
     <View style={[styles.tabIcon, focused && styles.tabIconFocused]}>
-      <Text style={[{ fontSize: 20, fontWeight: '300' }, focused && { fontWeight: '600' }]}>
+      <Text style={[styles.iconText, focused && styles.iconTextFocused]}>
         {icons[name]}
       </Text>
     </View>
@@ -71,6 +71,8 @@ export default function App() {
             tabBarInactiveTintColor: '#A8B2D1',
             tabBarItemStyle: {
               borderRadius: 20,
+              justifyContent: 'center',
+              alignItems: 'center',
             },
           })}
         >
@@ -87,10 +89,20 @@ export default function App() {
 
 const styles = StyleSheet.create({
   tabIcon: {
-    padding: 4,
+    height: 28,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   tabIconFocused: {
     transform: [{ scale: 1.1 }],
+  },
+  iconText: {
+    fontSize: 20,
+    fontWeight: '300',
+    lineHeight: 24,
+  },
+  iconTextFocused: {
+    fontWeight: '600',
   },
   tabLabel: {
     fontSize: 11,

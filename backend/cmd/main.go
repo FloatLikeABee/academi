@@ -48,9 +48,8 @@ func main() {
 		jwt := auth.JWTMiddleware(cfg)
 
 		aiSvc := ai.NewService(cfg)
-		aiRoutes := api.Group("/ai")
-		aiRoutes.Use(jwt)
-		aiSvc.RegisterRoutes(aiRoutes)
+		// Public AI routes (no auth required for web app)
+		aiSvc.RegisterRoutes(api)
 
 		communitySvc := community.NewService()
 		communityRoutes := api.Group("/community")
@@ -59,7 +58,7 @@ func main() {
 
 		docsSvc := docs.NewService()
 		docsRoutes := api.Group("/docs")
-		docsRoutes.Use(jwt)
+		// Public for local web app (list/create/read); add auth for production if needed
 		docsSvc.RegisterRoutes(docsRoutes)
 
 		guideSvc := guide.NewService()
