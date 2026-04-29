@@ -1097,19 +1097,24 @@ class AcademiApp {
                 headers: this.authBearerHeaders({ Accept: 'application/json' }),
             });
             if (!res.ok) throw new Error(await readApiErrorResponse(res));
-            const posts = await res.json();
+            const rawPosts = await res.json();
+            const posts = Array.isArray(rawPosts) ? rawPosts : [];
             feed.innerHTML = '';
             if (!posts.length) {
                 feed.innerHTML = '<p class="guide-hint">No posts yet. Share the first one above.</p>';
                 return;
             }
             for (const p of posts) {
+                if (!p || typeof p !== 'object' || !p.id) continue;
                 let comments = [];
                 try {
                     const cr = await fetch(`${this.apiBaseUrl}/community/posts/${encodeURIComponent(p.id)}/comments`, {
                         headers: this.authBearerHeaders({ Accept: 'application/json' }),
                     });
-                    if (cr.ok) comments = await cr.json();
+                    if (cr.ok) {
+                        const rawComments = await cr.json();
+                        comments = Array.isArray(rawComments) ? rawComments : [];
+                    }
                 } catch {
                     /* ignore */
                 }
