@@ -2,7 +2,10 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <!-- API: on phones, localhost means the phone itself. Leave port in sync with SERVER_PORT (.env). Override with full URL if needed: content="http://192.168.1.5:8978/api/v1" -->
+    <meta name="academi-api-base" content="">
+    <meta name="academi-api-port" content="8978">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
     <title>Academi - AI Study Assistant</title>
     <link rel="stylesheet" href="styles.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -12,6 +15,7 @@
         <!-- Header -->
         <header class="header">
             <div class="header-content">
+                <button type="button" id="chatHistoryBtn" class="header-history-btn" aria-label="Chat history" title="Recent chats">☰</button>
                 <h1 class="header-title">Academi AI</h1>
                 <div class="header-status">
                     <div class="neural-glow" id="statusGlow"></div>
@@ -19,6 +23,21 @@
                 </div>
             </div>
         </header>
+
+        <div class="chat-history-drawer" id="chatHistoryDrawer" hidden>
+            <div class="chat-history-backdrop" id="chatHistoryBackdrop"></div>
+            <aside class="chat-history-panel" aria-label="Chat history">
+                <div class="chat-history-header">
+                    <span class="chat-history-title">Recent chats</span>
+                    <div class="chat-history-actions">
+                        <button type="button" id="newChatSessionBtn" class="chat-history-new">＋ New</button>
+                        <button type="button" id="chatHistoryClose" class="chat-history-close" aria-label="Close">✕</button>
+                    </div>
+                </div>
+                <p class="chat-history-hint">Stored on this device’s server: up to <strong>35</strong> threads, <strong>72</strong> messages each (older turns drop off).</p>
+                <ul id="chatHistoryList" class="chat-history-list"></ul>
+            </aside>
+        </div>
 
         <!-- Main Content -->
         <main class="main-content" id="mainContent">
@@ -29,10 +48,17 @@
                         <input type="checkbox" id="documentModeToggle" />
                         <span>Document agent</span>
                     </label>
-                    <label class="toolbar-label" title="Wikipedia, DuckDuckGo summaries, arXiv (no API keys)">
+                    <label class="toolbar-label" title="Uses Wikipedia / web / arXiv plus pedagogical tutor prompt">
+                        <input type="checkbox" id="helpLearnToggle" />
+                        <span>Help you learn</span>
+                    </label>
+                    <label class="toolbar-label" title="When Help you learn is on, attach research snippets">
                         <input type="checkbox" id="researchToggle" checked />
                         <span>Research</span>
                     </label>
+                    <input type="file" id="chatFileInput" accept=".pdf,.txt,.md,.markdown,.png,.jpg,.jpeg,.webp,.gif" multiple hidden />
+                    <button type="button" id="chatAttachBtn" class="toolbar-attach-btn" title="Attach PDF, text, or image">📎</button>
+                    <span class="attach-badge" id="attachBadge" hidden></span>
                 </div>
                 <div class="messages-container" id="messagesContainer">
                     <!-- Messages -->
@@ -96,64 +122,43 @@
 
             <!-- Community Screen -->
             <div class="screen community-screen" id="communityScreen">
-                <div class="feed">
-                    <div class="post-card">
-                        <div class="post-header">
-                            <span class="post-author">User123</span>
-                            <span class="post-time">2h ago</span>
-                        </div>
-                        <div class="post-content">
-                            <p>Can someone explain quantum entanglement in simple terms?</p>
-                        </div>
-                        <div class="post-tags">
-                            <span class="tag-chip">#quantum</span>
-                            <span class="tag-chip">#physics</span>
-                        </div>
-                        <div class="post-actions">
-                            <button class="action-btn">△ 12</button>
-                            <button class="action-btn">⟨⟩ 5</button>
-                            <button class="action-btn">⧉ TL;DR</button>
-                        </div>
-                    </div>
-                    <!-- More posts would be added here -->
+                <div class="community-composer glass">
+                    <textarea id="communityPostInput" class="community-post-input" placeholder="Share a question, tip, or resource…" maxlength="8000" rows="3"></textarea>
+                    <button type="button" id="communityPostBtn" class="btn-primary community-post-submit">Post</button>
                 </div>
+                <div id="communityFeed" class="feed" aria-live="polite"></div>
             </div>
 
             <!-- Docs Screen -->
             <div class="screen docs-screen" id="docsScreen">
+                <div class="docs-top-bar">
+                    <button type="button" id="createDocBtn" class="create-doc-btn">＋ Create doc</button>
+                </div>
                 <div class="search-bar neural">
                     <input type="text" placeholder="Search documents..." id="docSearch">
                     <button class="search-btn">⟲</button>
                 </div>
                 <div class="docs-grid" id="docsGrid">
-                    <p class="docs-empty" id="docsEmpty">No documents yet. Turn on <strong>Document agent</strong> in Chat and ask for a doc — it will appear here when the AI finishes.</p>
+                    <p class="docs-empty" id="docsEmpty">No documents yet. Create one, upload from chat (📎), or use <strong>Document agent</strong> in Chat.</p>
                 </div>
             </div>
 
             <!-- Guide Screen -->
             <div class="screen guide-screen" id="guideScreen">
-                <div class="guide-header">
-                    <h2>Learn Calculus in 7 Days</h2>
-                    <div class="progress-ring">
-                        <div class="progress-text">3/7</div>
+                <div id="guideListView" class="guide-view guide-view--main">
+                    <div class="guide-toolbar">
+                        <button type="button" id="guideSubjectPickerBtn" class="guide-subject-picker-btn" aria-haspopup="dialog" aria-expanded="false" aria-controls="guideSubjectModal">
+                            <span id="guideSubjectPickerLabel">…</span>
+                            <span class="guide-subject-picker-chevron" aria-hidden="true">▾</span>
+                        </button>
                     </div>
+                    <div class="guide-header guide-header--list" id="guideListHeader"></div>
+                    <div id="guideCatalogList" class="guide-catalog-list"></div>
                 </div>
-                <div class="guide-steps">
-                    <div class="step completed">
-                        <div class="step-number">1</div>
-                        <div class="step-content">
-                            <h4>Introduction to Limits</h4>
-                            <p>Understanding the foundation of calculus</p>
-                        </div>
-                    </div>
-                    <div class="step active">
-                        <div class="step-number">2</div>
-                        <div class="step-content">
-                            <h4>Derivatives</h4>
-                            <p>Learn about rates of change</p>
-                        </div>
-                    </div>
-                    <!-- More steps -->
+                <div id="guideDetailView" class="guide-view" hidden>
+                    <button type="button" class="guide-back-btn" id="guideBackToList">← Guides</button>
+                    <div class="guide-header" id="guideDetailHeader"></div>
+                    <div class="guide-steps" id="guideDetailSteps"></div>
                 </div>
             </div>
 
@@ -161,7 +166,7 @@
             <div class="screen profile-screen" id="profileScreen">
                 <div class="profile-header">
                     <div class="avatar">⚉</div>
-                    <h2>Student Name</h2>
+                    <h2 id="profileUserName">Loading…</h2>
                 </div>
                 <div class="stats-grid">
                     <div class="stat-card">
@@ -197,7 +202,7 @@
                 <span class="tab-label">Chat</span>
             </button>
             <button class="tab-btn" data-screen="community">
-                <span class="tab-icon">⟲</span>
+                <span class="tab-icon">◍</span>
                 <span class="tab-label">Community</span>
             </button>
             <button class="tab-btn" data-screen="docs">
@@ -215,6 +220,45 @@
         </nav>
     </div>
 
+    <div class="doc-modal" id="createDocModal" hidden>
+        <div class="doc-modal-backdrop" id="createDocModalBackdrop"></div>
+        <div class="doc-modal-panel doc-modal-panel--form" role="dialog" aria-labelledby="createDocModalHeading">
+            <div class="doc-modal-header">
+                <h3 id="createDocModalHeading">Create document</h3>
+                <button type="button" class="doc-modal-close" id="createDocModalClose" aria-label="Close">✕</button>
+            </div>
+            <div class="create-doc-form">
+                <label class="form-label">Attach file (optional)</label>
+                <input type="file" id="createDocFile" class="form-file" accept=".pdf,.txt,.md,.markdown,.png,.jpg,.jpeg,.webp,.gif" />
+                <p class="form-hint">PDF, text, Markdown, or images — same as chat uploads. Or create from title + content only.</p>
+                <label class="form-label">Title</label>
+                <input type="text" id="createDocTitle" class="form-input" placeholder="e.g. Lecture 3 notes" maxlength="200" />
+                <label class="form-label">Content</label>
+                <textarea id="createDocContent" class="form-textarea" placeholder="Paste or type your notes… (not required if you only upload a file)" maxlength="500000" rows="8"></textarea>
+                <div class="form-actions">
+                    <button type="button" class="btn-secondary" id="createDocCancel">Cancel</button>
+                    <button type="button" class="btn-primary" id="createDocSaveBtn">Save</button>
+                    <button type="button" class="btn-primary" id="createDocSaveAnalyzeBtn">Save &amp; Help you learn</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="doc-modal" id="learnModal" hidden>
+        <div class="doc-modal-backdrop" id="learnModalBackdrop"></div>
+        <div class="doc-modal-panel" role="dialog" aria-labelledby="learnModalHeading">
+            <div class="doc-modal-header">
+                <h3 id="learnModalHeading">Help you learn</h3>
+                <button type="button" class="doc-modal-close" id="learnModalClose" aria-label="Close">✕</button>
+            </div>
+            <pre class="doc-modal-body" id="learnModalBody"></pre>
+            <div class="learn-modal-actions">
+                <button type="button" class="btn-secondary" id="learnModalDismiss">Close</button>
+                <button type="button" class="btn-primary" id="learnModalSaveDoc">Save analysis to Docs</button>
+            </div>
+        </div>
+    </div>
+
     <div class="doc-modal" id="docModal" hidden>
         <div class="doc-modal-backdrop" id="docModalBackdrop"></div>
         <div class="doc-modal-panel" role="dialog" aria-labelledby="docModalTitle">
@@ -223,6 +267,17 @@
                 <button type="button" class="doc-modal-close" id="docModalClose" aria-label="Close">✕</button>
             </div>
             <pre class="doc-modal-body" id="docModalBody"></pre>
+        </div>
+    </div>
+
+    <div class="doc-modal" id="guideSubjectModal" hidden>
+        <div class="doc-modal-backdrop" id="guideSubjectModalBackdrop"></div>
+        <div class="doc-modal-panel guide-subject-modal-panel" role="dialog" aria-modal="true" aria-labelledby="guideSubjectModalTitle">
+            <div class="doc-modal-header">
+                <h3 id="guideSubjectModalTitle">Choose a subject</h3>
+                <button type="button" class="doc-modal-close" id="guideSubjectModalClose" aria-label="Close">✕</button>
+            </div>
+            <div id="guideSubjectModalList" class="guide-subject-grid guide-subject-grid--modal"></div>
         </div>
     </div>
 

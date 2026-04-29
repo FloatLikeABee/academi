@@ -3,6 +3,8 @@ package community
 import (
 	"encoding/json"
 	"net/http"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -19,6 +21,43 @@ func NewService() *Service {
 	return &Service{}
 }
 
+func authorDisplayName(userID string) string {
+	if userID == "" {
+		return "Anonymous"
+	}
+	data, err := database.Get([]byte("user:" + userID))
+	if err != nil {
+		return "Member"
+	}
+	var u models.User
+	if json.Unmarshal(data, &u) != nil || strings.TrimSpace(u.Name) == "" {
+		return "Member"
+	}
+	return u.Name
+}
+
+func docExists(docID string) bool {
+	if docID == "" {
+		return false
+	}
+	_, err := database.Get([]byte("doc:" + docID))
+	return err == nil
+}
+
+func docTitleFallback(docID string) string {
+	data, err := database.Get([]byte("doc:" + docID))
+	if err != nil {
+		return "Document"
+	}
+	var d struct {
+		Title string `json:"title"`
+	}
+	if json.Unmarshal(data, &d) != nil || strings.TrimSpace(d.Title) == "" {
+		return "Document"
+	}
+	return d.Title
+}
+
 func (s *Service) CreatePost(c *gin.Context) {
 	var req models.CreatePostRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -26,18 +65,57 @@ func (s *Service) CreatePost(c *gin.Context) {
 		return
 	}
 
+	content := strings.TrimSpace(req.Content)
+	docID := strings.TrimSpace(req.DocID)
+	if content == "" && docID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "content or doc_id is required"})
+		return
+	}
+
+	if docID != "" && !docExists(docID) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "document not found"})
+		return
+	}
+
 	userID := auth.GetUserID(c)
+	docTitle := strings.TrimSpace(req.DocTitle)
+	if docTitle == "" && docID != "" {
+		docTitle = docTitleFallback(docID)
+	}
+
+	finalContent := content
+	tags := append([]string{}, req.Tags...)
+	if docID != "" {
+		if finalContent == "" {
+			finalContent = "📎 Shared a document: **" + docTitle + "**"
+		} else {
+			finalContent += "\n\n—\n📎 **" + docTitle + "**"
+		}
+		hasDocTag := false
+		for _, t := range tags {
+			if strings.EqualFold(t, "#docs") || strings.EqualFold(t, "#published") {
+				hasDocTag = true
+				break
+			}
+		}
+		if !hasDocTag {
+			tags = append(tags, "#docs", "#Published")
+		}
+	}
 
 	post := models.CommunityPost{
 		ID:         uuid.New().String(),
 		AuthorID:   userID,
-		Content:    req.Content,
-		Tags:       req.Tags,
+		AuthorName: authorDisplayName(userID),
+		Content:    finalContent,
+		Tags:       tags,
+		DocID:      docID,
 		CreatedAt:  time.Now().Unix(),
 		UpdatedAt:  time.Now().Unix(),
 		Upvotes:    0,
 		Downvotes:  0,
-		AIVerified: true,
+		Comments:   0,
+		AIVerified: false,
 	}
 
 	data, _ := json.Marshal(post)
@@ -72,15 +150,90 @@ func (s *Service) GetPost(c *gin.Context) {
 func (s *Service) ListPosts(c *gin.Context) {
 	var posts []models.CommunityPost
 
-	database.Iterate([]byte("post:"), func(key, value []byte) error {
+	_ = database.Iterate([]byte("post:"), func(key, value []byte) error {
 		var post models.CommunityPost
 		if err := json.Unmarshal(value, &post); err == nil {
+			if post.AuthorName == "" {
+				post.AuthorName = authorDisplayName(post.AuthorID)
+			}
 			posts = append(posts, post)
 		}
 		return nil
 	})
 
+	sort.Slice(posts, func(i, j int) bool {
+		return posts[i].CreatedAt > posts[j].CreatedAt
+	})
+
 	c.JSON(http.StatusOK, posts)
+}
+
+func (s *Service) ListComments(c *gin.Context) {
+	postID := c.Param("id")
+	prefix := []byte("comm:" + postID + ":")
+
+	var comments []models.Comment
+	_ = database.Iterate(prefix, func(key, value []byte) error {
+		var cm models.Comment
+		if json.Unmarshal(value, &cm) == nil {
+			if cm.AuthorName == "" {
+				cm.AuthorName = authorDisplayName(cm.AuthorID)
+			}
+			comments = append(comments, cm)
+		}
+		return nil
+	})
+	sort.Slice(comments, func(i, j int) bool {
+		return comments[i].CreatedAt < comments[j].CreatedAt
+	})
+	c.JSON(http.StatusOK, comments)
+}
+
+func (s *Service) CreateComment(c *gin.Context) {
+	postID := c.Param("id")
+	_, err := database.Get([]byte("post:" + postID))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Post not found"})
+		return
+	}
+
+	var req models.CreateCommentRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	userID := auth.GetUserID(c)
+	cm := models.Comment{
+		ID:         uuid.New().String(),
+		PostID:     postID,
+		AuthorID:   userID,
+		AuthorName: authorDisplayName(userID),
+		Content:    strings.TrimSpace(req.Content),
+		CreatedAt:  time.Now().Unix(),
+	}
+	if cm.Content == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "content is required"})
+		return
+	}
+
+	ckey := []byte("comm:" + postID + ":" + cm.ID)
+	raw, _ := json.Marshal(cm)
+	if err := database.Set(ckey, raw); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save comment"})
+		return
+	}
+
+	pdata, _ := database.Get([]byte("post:" + postID))
+	var post models.CommunityPost
+	if json.Unmarshal(pdata, &post) == nil {
+		post.Comments++
+		post.UpdatedAt = time.Now().Unix()
+		out, _ := json.Marshal(post)
+		_ = database.Set([]byte("post:"+postID), out)
+	}
+
+	c.JSON(http.StatusCreated, cm)
 }
 
 func (s *Service) VotePost(c *gin.Context) {
@@ -122,20 +275,20 @@ func (s *Service) VotePost(c *gin.Context) {
 }
 
 func (s *Service) SearchPosts(c *gin.Context) {
-	query := c.Query("q")
+	query := strings.ToLower(c.Query("q"))
 	tag := c.Query("tag")
 
 	var posts []models.CommunityPost
 
-	database.Iterate([]byte("post:"), func(key, value []byte) error {
+	_ = database.Iterate([]byte("post:"), func(key, value []byte) error {
 		var post models.CommunityPost
-		if err := json.Unmarshal(value, &post); err != nil {
+		if json.Unmarshal(value, &post) != nil {
 			return nil
 		}
 
 		match := true
 		if query != "" {
-			match = match && (containsIgnoreCase(post.Content, query) ||
+			match = match && (strings.Contains(strings.ToLower(post.Content), query) ||
 				containsSliceIgnoreCase(post.Tags, query))
 		}
 		if tag != "" {
@@ -143,21 +296,24 @@ func (s *Service) SearchPosts(c *gin.Context) {
 		}
 
 		if match {
+			if post.AuthorName == "" {
+				post.AuthorName = authorDisplayName(post.AuthorID)
+			}
 			posts = append(posts, post)
 		}
 		return nil
 	})
 
+	sort.Slice(posts, func(i, j int) bool {
+		return posts[i].CreatedAt > posts[j].CreatedAt
+	})
 	c.JSON(http.StatusOK, posts)
 }
 
-func containsIgnoreCase(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(substr) == 0)
-}
-
 func containsSliceIgnoreCase(slice []string, query string) bool {
+	q := strings.ToLower(query)
 	for _, item := range slice {
-		if len(item) >= len(query) {
+		if strings.Contains(strings.ToLower(item), q) {
 			return true
 		}
 	}
@@ -179,6 +335,8 @@ func (s *Service) RegisterRoutes(r *gin.RouterGroup) {
 		posts.POST("", s.CreatePost)
 		posts.GET("", s.ListPosts)
 		posts.GET("/search", s.SearchPosts)
+		posts.GET("/:id/comments", s.ListComments)
+		posts.POST("/:id/comments", s.CreateComment)
 		posts.GET("/:id", s.GetPost)
 		posts.POST("/:id/vote", s.VotePost)
 	}

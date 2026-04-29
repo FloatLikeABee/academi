@@ -15,6 +15,7 @@ import (
 	"github.com/academi/backend/internal/config"
 	"github.com/academi/backend/internal/database"
 	docs "github.com/academi/backend/internal/docs"
+	"github.com/academi/backend/internal/chatsessions"
 	"github.com/academi/backend/internal/guide"
 	notifications "github.com/academi/backend/internal/notifications"
 )
@@ -28,12 +29,17 @@ func main() {
 
 	r := gin.Default()
 
+	// Allow any Origin while echoing it back (required when AllowCredentials is true).
+	// Plain "*" + credentials is invalid per CORS and breaks browsers from other hosts/LAN devices.
 	r.Use(cors.New(cors.Config{
-		AllowOrigins:     cfg.CORS.Origins,
-		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
-		ExposeHeaders:    []string{"Content-Length"},
-		AllowCredentials: true,
+		AllowOriginFunc: func(origin string) bool {
+			return true
+		},
+		AllowMethods:        []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+		AllowHeaders:        []string{"Origin", "Content-Type", "Authorization", "Accept"},
+		ExposeHeaders:       []string{"Content-Length"},
+		AllowCredentials:    true,
+		AllowPrivateNetwork: true,
 	}))
 
 	r.GET("/health", func(c *gin.Context) {
@@ -56,14 +62,17 @@ func main() {
 		communityRoutes.Use(jwt)
 		communitySvc.RegisterRoutes(communityRoutes)
 
-		docsSvc := docs.NewService()
+		docsSvc := docs.NewService(cfg.Server.UploadDir)
 		docsRoutes := api.Group("/docs")
 		// Public for local web app (list/create/read); add auth for production if needed
 		docsSvc.RegisterRoutes(docsRoutes)
 
+		chatsSvc := chatsessions.NewService()
+		chatsSvc.RegisterRoutes(api)
+
 		guideSvc := guide.NewService()
 		guideRoutes := api.Group("/guides")
-		guideRoutes.Use(jwt)
+		// Public for web app (subjects + guides); tighten for production if needed
 		guideSvc.RegisterRoutes(guideRoutes)
 
 		notifSvc := notifications.NewService()

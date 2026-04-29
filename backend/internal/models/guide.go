@@ -1,7 +1,18 @@
 package models
 
+// GuideSubject is a top-level area (e.g. Mathematics) that contains many guides.
+type GuideSubject struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Icon        string `json:"icon"`
+	SortOrder   int    `json:"sort_order"`
+	CreatedAt   int64  `json:"created_at"`
+}
+
 type Guide struct {
 	ID          string      `json:"id"`
+	SubjectID   string      `json:"subject_id"`
 	Title       string      `json:"title"`
 	Description string      `json:"description"`
 	Category    string      `json:"category"`
@@ -26,6 +37,7 @@ type UserGuideProgress struct {
 }
 
 type CreateGuideRequest struct {
+	SubjectID   string      `json:"subject_id"`
 	Title       string      `json:"title" binding:"required"`
 	Description string      `json:"description" binding:"required"`
 	Category    string      `json:"category"`

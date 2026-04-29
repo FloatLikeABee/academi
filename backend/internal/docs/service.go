@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -15,10 +17,30 @@ import (
 	"github.com/academi/backend/internal/models"
 )
 
-type Service struct{}
+type Service struct {
+	uploadRoot string
+}
 
-func NewService() *Service {
-	return &Service{}
+func NewService(uploadRoot string) *Service {
+	root := uploadRoot
+	if root != "" && !filepath.IsAbs(root) {
+		if wd, err := os.Getwd(); err == nil {
+			root = filepath.Join(wd, root)
+		}
+	}
+	return &Service{uploadRoot: root}
+}
+
+func (s *Service) GetByID(id string) (*models.Document, error) {
+	data, err := database.Get([]byte("doc:" + id))
+	if err != nil {
+		return nil, err
+	}
+	var doc models.Document
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return nil, err
+	}
+	return &doc, nil
 }
 
 func (s *Service) CreateDoc(c *gin.Context) {
@@ -26,6 +48,15 @@ func (s *Service) CreateDoc(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+
+	req.Title = strings.TrimSpace(req.Title)
+	req.Type = strings.TrimSpace(req.Type)
+	if req.Title == "" {
+		req.Title = "Untitled document"
+	}
+	if req.Type == "" {
+		req.Type = "markdown"
 	}
 
 	userID := auth.GetUserID(c)
@@ -112,14 +143,11 @@ func (s *Service) SaveGenerated(title, content, uploaderID string, tags []string
 func (s *Service) GetDoc(c *gin.Context) {
 	docID := c.Param("id")
 
-	data, err := database.Get([]byte("doc:" + docID))
+	doc, err := s.GetByID(docID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Document not found"})
 		return
 	}
-
-	var doc models.Document
-	json.Unmarshal(data, &doc)
 
 	c.JSON(http.StatusOK, doc)
 }
@@ -130,6 +158,10 @@ func (s *Service) ListDocs(c *gin.Context) {
 	database.Iterate([]byte("doc:"), func(key, value []byte) error {
 		var doc models.Document
 		if err := json.Unmarshal(value, &doc); err == nil {
+			if c.Query("brief") == "1" {
+				doc.Content = ""
+				doc.StoredFilename = ""
+			}
 			docs = append(docs, doc)
 		}
 		return nil
@@ -193,6 +225,15 @@ func (s *Service) DeleteDoc(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Document deleted"})
 }
 
+func (s *Service) ReadStored(storedFilename string) ([]byte, error) {
+	if storedFilename == "" || strings.Contains(storedFilename, "..") ||
+		strings.ContainsAny(storedFilename, `/\`) {
+		return nil, fmt.Errorf("invalid stored name")
+	}
+	p := filepath.Join(s.uploadRoot, filepath.Base(storedFilename))
+	return os.ReadFile(p)
+}
+
 func (s *Service) tagsContain(tags []string, query string) bool {
 	for _, tag := range tags {
 		if strings.Contains(strings.ToLower(tag), query) {
@@ -217,13 +258,13 @@ func (s *Service) updateDocIndex() {
 	database.Set([]byte("docs_index"), data)
 }
 
+// RegisterRoutes mounts handlers on a group whose path is already /docs (e.g. /api/v1/docs).
 func (s *Service) RegisterRoutes(r *gin.RouterGroup) {
-	docs := r.Group("/docs")
-	{
-		docs.POST("", s.CreateDoc)
-		docs.GET("", s.ListDocs)
-		docs.GET("/search", s.SearchDocs)
-		docs.GET("/:id", s.GetDoc)
-		docs.DELETE("/:id", s.DeleteDoc)
-	}
+	r.POST("/upload", s.UploadDoc)
+	r.GET("/search", s.SearchDocs)
+	r.GET("", s.ListDocs)
+	r.POST("", s.CreateDoc)
+	r.GET("/:id/file", s.ServeDocFile)
+	r.GET("/:id", s.GetDoc)
+	r.DELETE("/:id", s.DeleteDoc)
 }

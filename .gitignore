@@ -138,3 +138,5 @@ playwright/.cache/
 # Temporary files
 *.tmp
 *.temp
+backend/data/badger/
+backend/data/badger/*

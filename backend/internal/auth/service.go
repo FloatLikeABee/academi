@@ -135,11 +135,56 @@ func (s *Service) Login(c *gin.Context) {
 	})
 }
 
+// MockLogin creates or returns a fixed demo user and JWT (for local / prototype apps).
+func (s *Service) MockLogin(c *gin.Context) {
+	const mockUserID = "user_mock_dev"
+	const mockEmail = "demo@academi.local"
+
+	now := time.Now().Unix()
+	data, err := database.Get([]byte("user:" + mockUserID))
+	var user models.User
+	if err != nil {
+		user = models.User{
+			ID:        mockUserID,
+			Email:     mockEmail,
+			Name:      "Study Explorer (demo)",
+			CreatedAt: now,
+			UpdatedAt: now,
+		}
+		user.PasswordHash = s.hashPassword("mock-placeholder")
+		raw, _ := json.Marshal(user)
+		if err := database.Set([]byte("user:"+mockUserID), raw); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to seed demo user"})
+			return
+		}
+		_ = database.Set([]byte("user_email:"+mockEmail), []byte(mockUserID))
+		settings := models.UserSettings{
+			UserID: mockUserID, Theme: "dark", AITone: "casual", AIDepth: "intermediate",
+		}
+		sd, _ := json.Marshal(settings)
+		_ = database.Set([]byte("settings:"+mockUserID), sd)
+	} else {
+		_ = json.Unmarshal(data, &user)
+	}
+
+	token, err := s.generateToken(user.ID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
+		return
+	}
+	user.PasswordHash = ""
+	c.JSON(http.StatusOK, models.AuthResponse{
+		Token: token,
+		User:  user,
+	})
+}
+
 func (s *Service) RegisterRoutes(r *gin.RouterGroup) {
 	auth := r.Group("/auth")
 	{
 		auth.POST("/register", s.Register)
 		auth.POST("/login", s.Login)
+		auth.POST("/mock", s.MockLogin)
 	}
 }
 

@@ -6,6 +6,7 @@ type CommunityPost struct {
 	AuthorName string   `json:"author_name"`
 	Content    string   `json:"content"`
 	Tags       []string `json:"tags"`
+	DocID      string   `json:"doc_id,omitempty"`
 	CreatedAt  int64    `json:"created_at"`
 	UpdatedAt  int64    `json:"updated_at"`
 	Upvotes    int      `json:"upvotes"`
@@ -16,16 +17,19 @@ type CommunityPost struct {
 }
 
 type Comment struct {
-	ID        string `json:"id"`
-	PostID    string `json:"post_id"`
-	AuthorID  string `json:"author_id"`
-	Content   string `json:"content"`
-	CreatedAt int64  `json:"created_at"`
+	ID         string `json:"id"`
+	PostID     string `json:"post_id"`
+	AuthorID   string `json:"author_id"`
+	AuthorName string `json:"author_name"`
+	Content    string `json:"content"`
+	CreatedAt  int64  `json:"created_at"`
 }
 
 type CreatePostRequest struct {
-	Content string   `json:"content" binding:"required"`
-	Tags    []string `json:"tags"`
+	Content  string   `json:"content"`
+	Tags     []string `json:"tags"`
+	DocID    string   `json:"doc_id"`
+	DocTitle string   `json:"doc_title"`
 }
 
 type UpdatePostRequest struct {

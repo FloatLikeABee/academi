@@ -57,6 +57,8 @@ type ChatRequest struct {
 	Messages         []ChatMessage     `json:"messages"`
 	DocumentMode     bool              `json:"document_mode"`
 	DisableResearch  bool              `json:"disable_research"`
+	DocIDs           []string          `json:"doc_ids"`
+	HelpYouLearn     bool              `json:"help_you_learn"`
 }
 
 type SummarizeRequest struct {
@@ -231,6 +233,28 @@ func (s *Service) buildChatPayload(req ChatRequest) ([]ChatMessage, []SourceRefe
 		})
 	}
 
+	docSvc := docs.NewService(s.cfg.Server.UploadDir)
+	for _, id := range req.DocIDs {
+		d, err := docSvc.GetByID(strings.TrimSpace(id))
+		if err != nil {
+			continue
+		}
+		if d.Type == "image" {
+			continue
+		}
+		if d.Content == "" {
+			continue
+		}
+		chunk := d.Content
+		if len(chunk) > 120000 {
+			chunk = chunk[:120000] + "\n… [truncated]"
+		}
+		out = append(out, ChatMessage{
+			Role:    "system",
+			Content: fmt.Sprintf("Attached document «%s» (type %s):\n%s", d.Title, d.Type, chunk),
+		})
+	}
+
 	var researchSources []SourceReference
 	if req.DocumentMode && !req.DisableResearch {
 		if q := researchQueryFromThread(req); q != "" {
@@ -282,6 +306,15 @@ func (s *Service) buildChatPayload(req ChatRequest) ([]ChatMessage, []SourceRefe
 }
 
 func (s *Service) ChatWithMessages(req ChatRequest) (string, []SourceReference, error) {
+	if req.HelpYouLearn || s.docIDsIncludeImage(req.DocIDs) {
+		user := strings.TrimSpace(req.Message)
+		if user == "" {
+			user = lastUserSnippet(req)
+		}
+		prior := clipConversation(req.Messages, 40)
+		return s.runHelpYouLearn(req.DocIDs, user, !req.DisableResearch, req.AIProvider, prior)
+	}
+
 	payload, researchSources, err := s.buildChatPayload(req)
 	if err != nil {
 		return "", nil, err
@@ -315,8 +348,8 @@ func (s *Service) ChatHandler(c *gin.Context) {
 		req.Context = make(map[string]string)
 	}
 
-	if strings.TrimSpace(req.Message) == "" && len(req.Messages) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "message or messages required"})
+	if strings.TrimSpace(req.Message) == "" && len(req.Messages) == 0 && len(req.DocIDs) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "message, messages, or doc_ids required"})
 		return
 	}
 
@@ -332,12 +365,15 @@ func (s *Service) ChatHandler(c *gin.Context) {
 		"sources":       sources,
 		"document_mode": req.DocumentMode,
 	}
+	if req.HelpYouLearn {
+		out["offer_save_analysis"] = true
+	}
 
-	if req.DocumentMode {
+	if req.DocumentMode && !req.HelpYouLearn {
 		if d, title, body, ok := parseAcademiDoc(response); ok {
 			display = d
 			out["response"] = display
-			docSvc := docs.NewService()
+			docSvc := docs.NewService(s.cfg.Server.UploadDir)
 			saved, saveErr := docSvc.SaveGenerated(title, body, auth.GetUserID(c), nil)
 			if saveErr != nil {
 				log.Printf("save AI document: %v", saveErr)
@@ -461,6 +497,7 @@ func (s *Service) RegisterRoutes(r *gin.RouterGroup) {
 	{
 		ai.GET("/providers", s.ProvidersHandler)
 		ai.POST("/chat", s.ChatHandler)
+		ai.POST("/learn", s.LearnHandler)
 		ai.POST("/summarize", s.SummarizeHandler)
 		ai.POST("/generate-guide", s.GenerateGuideHandler)
 		ai.POST("/moderate", s.ModerateHandler)

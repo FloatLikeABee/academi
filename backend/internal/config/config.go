@@ -18,8 +18,9 @@ type Config struct {
 }
 
 type ServerConfig struct {
-	Port string
-	Mode string
+	Port       string
+	Mode       string
+	UploadDir  string
 }
 
 type DatabaseConfig struct {
@@ -64,8 +65,9 @@ func Load() *Config {
 		godotenv.Load()
 		instance = &Config{
 			Server: ServerConfig{
-				Port: getEnv("SERVER_PORT", "8080"),
-				Mode: getEnv("SERVER_MODE", "debug"),
+				Port:      getEnv("SERVER_PORT", "8080"),
+				Mode:      getEnv("SERVER_MODE", "debug"),
+				UploadDir: getEnv("UPLOAD_DIR", "./data/uploads"),
 			},
 			Database: DatabaseConfig{
 				Path:               getEnv("DB_PATH", "./data/badger"),
