@@ -8,6 +8,7 @@ type GuideSubject struct {
 	Icon        string `json:"icon"`
 	SortOrder   int    `json:"sort_order"`
 	CreatedAt   int64  `json:"created_at"`
+	CreatedBy   string `json:"created_by,omitempty"`
 }
 
 type Guide struct {
@@ -20,6 +21,7 @@ type Guide struct {
 	Color       string      `json:"color"`
 	Steps       []GuideStep `json:"steps"`
 	CreatedAt   int64       `json:"created_at"`
+	CreatedBy   string      `json:"created_by,omitempty"`
 }
 
 type GuideStep struct {
@@ -37,11 +39,33 @@ type UserGuideProgress struct {
 }
 
 type CreateGuideRequest struct {
-	SubjectID   string      `json:"subject_id"`
+	SubjectID   string      `json:"subject_id" binding:"required"`
 	Title       string      `json:"title" binding:"required"`
 	Description string      `json:"description" binding:"required"`
 	Category    string      `json:"category"`
 	Icon        string      `json:"icon"`
 	Color       string      `json:"color"`
 	Steps       []GuideStep `json:"steps" binding:"required"`
+}
+
+type UpdateGuideRequest struct {
+	SubjectID   string      `json:"subject_id" binding:"required"`
+	Title       string      `json:"title" binding:"required"`
+	Description string      `json:"description" binding:"required"`
+	Category    string      `json:"category"`
+	Icon        string      `json:"icon"`
+	Color       string      `json:"color"`
+	Steps       []GuideStep `json:"steps" binding:"required"`
+}
+
+type CreateSubjectRequest struct {
+	Name        string `json:"name" binding:"required"`
+	Description string `json:"description"`
+	Icon        string `json:"icon"`
+}
+
+type UpdateSubjectRequest struct {
+	Name        string `json:"name" binding:"required"`
+	Description string `json:"description"`
+	Icon        string `json:"icon"`
 }

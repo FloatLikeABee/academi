@@ -129,6 +129,8 @@ dist/
 *.apk
 *.aab
 *.ipa
+*.exe
+*.pdf
 
 # Test results
 test-results/

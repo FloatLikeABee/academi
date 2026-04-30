@@ -85,6 +85,8 @@ class AcademiApp {
         } catch {
             this.currentUser = null;
         }
+        this._communityDetailPostId = null;
+        this._guideEditorId = null;
 
         this.init();
     }
@@ -186,15 +188,14 @@ class AcademiApp {
             });
         }
 
-        const chatAttachBtn = document.getElementById('chatAttachBtn');
         const chatFileInput = document.getElementById('chatFileInput');
-        if (chatAttachBtn && chatFileInput) {
-            chatAttachBtn.addEventListener('click', () => chatFileInput.click());
+        if (chatFileInput) {
             chatFileInput.addEventListener('change', (e) => {
-                if (e.target.files?.length) {
-                    this.uploadChatFiles(e.target.files);
+                const files = e.target.files;
+                if (!files?.length) return;
+                void this.uploadChatFiles(files).finally(() => {
                     e.target.value = '';
-                }
+                });
             });
         }
 
@@ -204,6 +205,7 @@ class AcademiApp {
         document.getElementById('createDocCancel')?.addEventListener('click', () => this.closeCreateDocModal());
         document.getElementById('createDocSaveBtn')?.addEventListener('click', () => this.submitCreateDoc(false));
         document.getElementById('createDocSaveAnalyzeBtn')?.addEventListener('click', () => this.submitCreateDoc(true));
+        document.getElementById('createDocFile')?.addEventListener('change', () => this.updateCreateDocFileName());
 
         document.getElementById('learnModalClose')?.addEventListener('click', () => this.closeLearnModal());
         document.getElementById('learnModalBackdrop')?.addEventListener('click', () => this.closeLearnModal());
@@ -313,9 +315,65 @@ class AcademiApp {
 
         document.getElementById('guideBackToList')?.addEventListener('click', () => this.backToGuideList());
         document.getElementById('guideCatalogList')?.addEventListener('click', (e) => {
-            const card = e.target.closest('.guide-catalog-card');
-            if (!card?.dataset?.guideId) return;
-            void this.openGuideDetail(card.dataset.guideId);
+            const editBtn = e.target.closest('.guide-edit-btn');
+            if (editBtn?.dataset?.guideId) {
+                e.preventDefault();
+                e.stopPropagation();
+                void this.openGuideEditorEdit(editBtn.dataset.guideId);
+                return;
+            }
+            const delBtn = e.target.closest('.guide-delete-btn');
+            if (delBtn?.dataset?.guideId) {
+                e.preventDefault();
+                e.stopPropagation();
+                if (!window.confirm('Delete this guide permanently?')) return;
+                void this.deleteUserGuide(delBtn.dataset.guideId);
+                return;
+            }
+            const openBtn = e.target.closest('.guide-catalog-open');
+            if (openBtn?.dataset?.guideId) {
+                void this.openGuideDetail(openBtn.dataset.guideId);
+            }
+        });
+
+        document.getElementById('guideFabBtn')?.addEventListener('click', () => void this.openGuideEditorCreate());
+        document.getElementById('guideEditorModalClose')?.addEventListener('click', () => this.closeGuideEditorModal());
+        document.getElementById('guideEditorModalBackdrop')?.addEventListener('click', () => this.closeGuideEditorModal());
+        document.getElementById('guideEditorCancelBtn')?.addEventListener('click', () => this.closeGuideEditorModal());
+        document.getElementById('guideEditorSaveBtn')?.addEventListener('click', () => void this.submitGuideEditor());
+        document.getElementById('guideEditorDeleteBtn')?.addEventListener('click', () => void this.deleteGuideFromEditor());
+        document.getElementById('guideFormAddStepBtn')?.addEventListener('click', () => this.appendGuideFormStepRow(null));
+        document.getElementById('guideFormNewSubjectToggle')?.addEventListener('change', (e) => {
+            const on = e.target.checked;
+            const fields = document.getElementById('guideFormNewSubjectFields');
+            const sel = document.getElementById('guideFormSubjectSelect');
+            if (fields) fields.hidden = !on;
+            if (sel) sel.disabled = on;
+        });
+
+        document.getElementById('guideUserSubjectsList')?.addEventListener('click', (e) => {
+            const editBtn = e.target.closest('.guide-user-subject-edit');
+            if (editBtn?.dataset?.subjectId) {
+                void this.promptEditUserSubject(editBtn.dataset.subjectId);
+                return;
+            }
+            const delBtn = e.target.closest('.guide-user-subject-delete');
+            if (delBtn?.dataset?.subjectId) {
+                void this.deleteUserSubject(delBtn.dataset.subjectId);
+            }
+        });
+
+        document.getElementById('guideDetailHeader')?.addEventListener('click', (e) => {
+            const editBtn = e.target.closest('.guide-detail-edit-btn');
+            if (editBtn?.dataset?.guideId) {
+                void this.openGuideEditorEdit(editBtn.dataset.guideId);
+                return;
+            }
+            const delBtn = e.target.closest('.guide-detail-delete-btn');
+            if (delBtn?.dataset?.guideId) {
+                if (!window.confirm('Delete this guide permanently?')) return;
+                void this.deleteUserGuide(delBtn.dataset.guideId);
+            }
         });
 
         document.getElementById('guideDetailSteps')?.addEventListener('change', (e) => {
@@ -327,36 +385,40 @@ class AcademiApp {
             this.refreshGuideDetailProgress();
         });
 
-        document.getElementById('communityPostBtn')?.addEventListener('click', () => void this.submitCommunityPost());
+        document.getElementById('communityAddPostBtn')?.addEventListener('click', () => this.openCommunityCreateModal());
+        document.getElementById('communityCreateModalClose')?.addEventListener('click', () => this.closeCommunityCreateModal());
+        document.getElementById('communityCreateModalBackdrop')?.addEventListener('click', () => this.closeCommunityCreateModal());
+        document.getElementById('communityCreateModalCancel')?.addEventListener('click', () => this.closeCommunityCreateModal());
+        document.getElementById('communityModalPostSubmit')?.addEventListener('click', () => void this.submitCommunityPost());
+
+        document.getElementById('communityPostDetailClose')?.addEventListener('click', () => this.closeCommunityPostDetailModal());
+        document.getElementById('communityPostDetailBackdrop')?.addEventListener('click', () => this.closeCommunityPostDetailModal());
+        document.getElementById('communityDetailVoteUp')?.addEventListener('click', () => {
+            if (this._communityDetailPostId) void this.voteCommunityPost(this._communityDetailPostId, 'up');
+        });
+        document.getElementById('communityDetailVoteDown')?.addEventListener('click', () => {
+            if (this._communityDetailPostId) void this.voteCommunityPost(this._communityDetailPostId, 'down');
+        });
+        document.getElementById('communityDetailReplySend')?.addEventListener('click', () =>
+            void this.submitCommunityCommentFromDetail()
+        );
+
         document.getElementById('communityFeed')?.addEventListener('click', (e) => {
-            const od = e.target.closest('.doc-open-from-post');
+            const row = e.target.closest('.community-post-row');
+            if (row?.dataset?.postId) {
+                e.preventDefault();
+                void this.openCommunityPostDetail(row.dataset.postId);
+            }
+        });
+
+        document.getElementById('communityPostDetailModal')?.addEventListener('click', (e) => {
+            const od = e.target.closest('.community-detail-open-doc');
             if (od?.dataset?.docId) {
                 e.preventDefault();
                 const id = od.dataset.docId;
+                this.closeCommunityPostDetailModal();
                 this.switchScreen('docs');
                 void this.loadDocs().then(() => this.openDocModal(id));
-                return;
-            }
-            const vu = e.target.closest('.community-vote-up');
-            if (vu?.dataset?.postId) {
-                e.preventDefault();
-                void this.voteCommunityPost(vu.dataset.postId, 'up');
-                return;
-            }
-            const vd = e.target.closest('.community-vote-down');
-            if (vd?.dataset?.postId) {
-                e.preventDefault();
-                void this.voteCommunityPost(vd.dataset.postId, 'down');
-                return;
-            }
-            const send = e.target.closest('.community-send-comment');
-            if (send?.dataset?.postId) {
-                e.preventDefault();
-                const pid = send.dataset.postId;
-                const ta = document.querySelector(`textarea.community-reply-input[data-post-id="${pid}"]`);
-                const text = (ta?.value || '').trim();
-                if (!text) return;
-                void this.submitCommunityComment(pid, text, ta, send);
             }
         });
 
@@ -822,6 +884,7 @@ class AcademiApp {
     }
 
     async uploadChatFiles(fileList) {
+        await this.ensureMockSession();
         const headers = {};
         if (this.authToken) headers['Authorization'] = `Bearer ${this.authToken}`;
         for (const file of fileList) {
@@ -849,11 +912,21 @@ class AcademiApp {
         document.getElementById('createDocContent').value = '';
         const f = document.getElementById('createDocFile');
         if (f) f.value = '';
+        this.updateCreateDocFileName();
         document.getElementById('createDocModal').hidden = false;
     }
 
     closeCreateDocModal() {
         document.getElementById('createDocModal').hidden = true;
+        this.updateCreateDocFileName();
+    }
+
+    updateCreateDocFileName() {
+        const fileEl = document.getElementById('createDocFile');
+        const nameEl = document.getElementById('createDocFileName');
+        if (!nameEl) return;
+        const fileName = fileEl?.files?.[0]?.name;
+        nameEl.textContent = fileName ? `Selected: ${fileName}` : 'No file selected';
     }
 
     async submitCreateDoc(runLearnAfter) {
@@ -876,6 +949,7 @@ class AcademiApp {
                 const doc = await res.json();
                 this.closeCreateDocModal();
                 if (fileEl) fileEl.value = '';
+                this.updateCreateDocFileName();
                 await this.loadDocs();
                 this.flashStatus(`Uploaded: ${doc.title || 'Document'}`);
                 if (runLearnAfter && doc.id) {
@@ -1087,6 +1161,141 @@ class AcademiApp {
         }
     }
 
+    openCommunityCreateModal() {
+        const ta = document.getElementById('communityModalPostInput');
+        if (ta) ta.value = '';
+        const m = document.getElementById('communityCreateModal');
+        if (m) m.hidden = false;
+    }
+
+    closeCommunityCreateModal() {
+        const m = document.getElementById('communityCreateModal');
+        if (m) m.hidden = true;
+    }
+
+    closeCommunityPostDetailModal() {
+        this._communityDetailPostId = null;
+        const m = document.getElementById('communityPostDetailModal');
+        if (m) m.hidden = true;
+    }
+
+    truncatePreview(text, maxLen) {
+        const s = (text || '').replace(/\s+/g, ' ').trim();
+        if (s.length <= maxLen) return s;
+        return s.slice(0, maxLen - 1) + '…';
+    }
+
+    renderCommunityPostRow(post) {
+        const wrap = document.createElement('button');
+        wrap.type = 'button';
+        wrap.className = 'community-post-row glass';
+        wrap.dataset.postId = post.id;
+        const preview = this.truncatePreview(post.content, 160);
+        const author = this.escapeHtml(post.author_name || 'Member');
+        const when = this.escapeHtml(this.formatSessionTime(post.created_at));
+        const replies = post.comments ?? 0;
+        const ups = post.upvotes ?? 0;
+        wrap.innerHTML = `
+            <div class="community-post-row-top">
+                <span class="community-post-row-author">${author}</span>
+                <span class="community-post-row-time">${when}</span>
+            </div>
+            <p class="community-post-row-preview">${this.escapeHtml(preview || '(No text)')}</p>
+            <div class="community-post-row-meta">
+                <span>△ ${ups}</span><span>${replies} repl${replies === 1 ? 'y' : 'ies'}</span>
+            </div>
+        `;
+        return wrap;
+    }
+
+    async openCommunityPostDetail(postId) {
+        await this.ensureMockSession();
+        this._communityDetailPostId = postId;
+        const modal = document.getElementById('communityPostDetailModal');
+        if (modal) modal.hidden = false;
+        await this.refreshCommunityPostDetail();
+    }
+
+    async refreshCommunityPostDetail() {
+        const postId = this._communityDetailPostId;
+        if (!postId) return;
+        try {
+            const pres = await fetch(`${this.apiBaseUrl}/community/posts/${encodeURIComponent(postId)}`, {
+                headers: this.authBearerHeaders({ Accept: 'application/json' }),
+            });
+            if (!pres.ok) throw new Error(await readApiErrorResponse(pres));
+            const post = await pres.json();
+
+            let comments = [];
+            const crs = await fetch(`${this.apiBaseUrl}/community/posts/${encodeURIComponent(postId)}/comments`, {
+                headers: this.authBearerHeaders({ Accept: 'application/json' }),
+            });
+            if (crs.ok) {
+                const raw = await crs.json();
+                comments = Array.isArray(raw) ? raw : [];
+            }
+
+            this.fillCommunityPostDetail(post, comments);
+        } catch (e) {
+            console.error(e);
+            alert(e.message || 'Could not load post');
+            this.closeCommunityPostDetailModal();
+        }
+    }
+
+    fillCommunityPostDetail(post, comments) {
+        const author = post.author_name || 'Member';
+        const when = this.formatSessionTime(post.created_at);
+        const meta = document.getElementById('communityPostDetailMeta');
+        if (meta) meta.textContent = `${author} · ${when}`;
+
+        const contentEl = document.getElementById('communityPostDetailContent');
+        if (contentEl) contentEl.textContent = post.content || '';
+
+        const tagsEl = document.getElementById('communityPostDetailTags');
+        if (tagsEl) {
+            const tags = post.tags || [];
+            if (tags.length) {
+                tagsEl.innerHTML = tags.map((t) => `<span class="tag-chip">${this.escapeHtml(t)}</span>`).join('');
+                tagsEl.hidden = false;
+            } else {
+                tagsEl.innerHTML = '';
+                tagsEl.hidden = true;
+            }
+        }
+
+        const docWrap = document.getElementById('communityPostDetailDoc');
+        if (docWrap) {
+            if (post.doc_id) {
+                docWrap.innerHTML = `<button type="button" class="action-btn small community-detail-open-doc" data-doc-id="${this.escapeHtml(post.doc_id)}">Open in Docs</button>`;
+                docWrap.hidden = false;
+            } else {
+                docWrap.innerHTML = '';
+                docWrap.hidden = true;
+            }
+        }
+
+        const upEl = document.getElementById('communityDetailUpCount');
+        const downEl = document.getElementById('communityDetailDownCount');
+        if (upEl) upEl.textContent = String(post.upvotes ?? 0);
+        if (downEl) downEl.textContent = String(post.downvotes ?? 0);
+
+        const list = document.getElementById('communityPostDetailComments');
+        if (list) {
+            if (!comments.length) {
+                list.innerHTML = '<p class="guide-hint" style="margin:0;font-size:12px">No replies yet.</p>';
+            } else {
+                list.innerHTML = comments
+                    .map((c) => {
+                        const a = this.escapeHtml(c.author_name || 'Member');
+                        const txt = this.escapeHtml(c.content || '');
+                        return `<div class="community-comment-line"><span class="community-comment-author">${a}</span>${txt}</div>`;
+                    })
+                    .join('');
+            }
+        }
+    }
+
     async loadCommunity() {
         await this.ensureMockSession();
         const feed = document.getElementById('communityFeed');
@@ -1101,24 +1310,12 @@ class AcademiApp {
             const posts = Array.isArray(rawPosts) ? rawPosts : [];
             feed.innerHTML = '';
             if (!posts.length) {
-                feed.innerHTML = '<p class="guide-hint">No posts yet. Share the first one above.</p>';
+                feed.innerHTML = '<p class="guide-hint">No posts yet. Tap ＋ to add one.</p>';
                 return;
             }
             for (const p of posts) {
                 if (!p || typeof p !== 'object' || !p.id) continue;
-                let comments = [];
-                try {
-                    const cr = await fetch(`${this.apiBaseUrl}/community/posts/${encodeURIComponent(p.id)}/comments`, {
-                        headers: this.authBearerHeaders({ Accept: 'application/json' }),
-                    });
-                    if (cr.ok) {
-                        const rawComments = await cr.json();
-                        comments = Array.isArray(rawComments) ? rawComments : [];
-                    }
-                } catch {
-                    /* ignore */
-                }
-                feed.appendChild(this.renderCommunityPostCard(p, comments));
+                feed.appendChild(this.renderCommunityPostRow(p));
             }
         } catch (e) {
             console.error(e);
@@ -1126,54 +1323,9 @@ class AcademiApp {
         }
     }
 
-    renderCommunityPostCard(post, comments) {
-        const wrap = document.createElement('div');
-        wrap.className = 'post-card';
-        wrap.dataset.postId = post.id;
-        const author = this.escapeHtml(post.author_name || 'Member');
-        const when = this.escapeHtml(this.formatSessionTime(post.created_at));
-        const content = this.escapeHtml(post.content || '');
-        const tags = (post.tags || [])
-            .map((t) => `<span class="tag-chip">${this.escapeHtml(t)}</span>`)
-            .join('');
-        const docLine = post.doc_id
-            ? `<div class="post-doc-cta"><button type="button" class="action-btn small doc-open-from-post" data-doc-id="${this.escapeHtml(post.doc_id)}">Open in Docs</button></div>`
-            : '';
-        const commentsHtml = (comments || [])
-            .map((c) => {
-                const a = this.escapeHtml(c.author_name || 'Member');
-                const txt = this.escapeHtml(c.content || '');
-                return `<div class="community-comment-line"><span class="community-comment-author">${a}</span>${txt}</div>`;
-            })
-            .join('');
-        const pid = this.escapeHtml(post.id);
-        wrap.innerHTML = `
-            <div class="post-header">
-                <span class="post-author">${author}</span>
-                <span class="post-time">${when}</span>
-            </div>
-            <div class="post-content">${content}</div>
-            ${tags ? `<div class="post-tags">${tags}</div>` : ''}
-            ${docLine}
-            <div class="post-comments-block">
-                <div class="post-comments-label">Replies (${comments?.length || 0})</div>
-                ${commentsHtml || '<p class="guide-hint" style="margin:0;font-size:12px">No replies yet.</p>'}
-            </div>
-            <div class="post-reply-row">
-                <textarea class="community-reply-input" data-post-id="${pid}" rows="2" placeholder="Write a reply…"></textarea>
-                <button type="button" class="btn-secondary community-send-comment" data-post-id="${pid}">Reply</button>
-            </div>
-            <div class="post-actions">
-                <button type="button" class="action-btn community-vote-up" data-post-id="${pid}">△ ${post.upvotes ?? 0}</button>
-                <button type="button" class="action-btn community-vote-down" data-post-id="${pid}">▽ ${post.downvotes ?? 0}</button>
-            </div>
-        `;
-        return wrap;
-    }
-
     async submitCommunityPost() {
         await this.ensureMockSession();
-        const input = document.getElementById('communityPostInput');
+        const input = document.getElementById('communityModalPostInput');
         const text = (input?.value || '').trim();
         if (!text) {
             alert('Write something to post.');
@@ -1187,6 +1339,7 @@ class AcademiApp {
             });
             if (!res.ok) throw new Error(await readApiErrorResponse(res));
             if (input) input.value = '';
+            this.closeCommunityCreateModal();
             await this.loadCommunity();
             this.flashStatus('Posted to community');
         } catch (e) {
@@ -1204,10 +1357,23 @@ class AcademiApp {
                 body: JSON.stringify({ type }),
             });
             if (!res.ok) throw new Error(await readApiErrorResponse(res));
-            void this.loadCommunity();
+            await this.loadCommunity();
+            if (this._communityDetailPostId === postId) {
+                await this.refreshCommunityPostDetail();
+            }
         } catch (e) {
             alert(e.message || 'Vote failed');
         }
+    }
+
+    async submitCommunityCommentFromDetail() {
+        const postId = this._communityDetailPostId;
+        if (!postId) return;
+        const ta = document.getElementById('communityDetailReplyInput');
+        const btn = document.getElementById('communityDetailReplySend');
+        const text = (ta?.value || '').trim();
+        if (!text) return;
+        await this.submitCommunityComment(postId, text, ta, btn);
     }
 
     async submitCommunityComment(postId, text, textareaEl, buttonEl) {
@@ -1225,7 +1391,10 @@ class AcademiApp {
             });
             if (!res.ok) throw new Error(await readApiErrorResponse(res));
             if (textareaEl) textareaEl.value = '';
-            void this.loadCommunity();
+            await this.loadCommunity();
+            if (this._communityDetailPostId === postId) {
+                await this.refreshCommunityPostDetail();
+            }
         } catch (e) {
             alert(e.message || 'Reply failed');
         } finally {
@@ -1361,9 +1530,12 @@ class AcademiApp {
         titleEl.textContent = doc.title || 'Document';
         if ((doc.type || '').toLowerCase() === 'image' && doc.id) {
             const url = `${this.apiBaseUrl}/docs/${encodeURIComponent(doc.id)}/file`;
+            bodyEl.classList.remove('doc-modal-body--md');
             bodyEl.textContent = `${doc.ai_summary || 'Image document.'}\n\nFile (open in browser): ${url}`;
         } else {
-            bodyEl.textContent = doc.content || doc.ai_summary || '(No body)';
+            bodyEl.classList.add('doc-modal-body--md');
+            const raw = doc.content || doc.ai_summary || '(No body)';
+            bodyEl.innerHTML = this.markdownToHtml(raw);
         }
         modal.hidden = false;
     }
@@ -1576,6 +1748,19 @@ class AcademiApp {
         return h;
     }
 
+    guideMutationHeaders() {
+        return this.authBearerHeaders({
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+        });
+    }
+
+    async refreshGuideSubjectsFromApi() {
+        const res = await fetch(`${this.apiBaseUrl}/guides/subjects`, { headers: this.guideApiHeaders() });
+        if (!res.ok) throw new Error(await readApiErrorResponse(res));
+        this.guideSubjects = await res.json();
+    }
+
     guideDoneStorageKey(guideId) {
         return `academi_guide_done:${guideId}`;
     }
@@ -1601,8 +1786,10 @@ class AcademiApp {
     showGuidePanel(which) {
         const list = document.getElementById('guideListView');
         const detail = document.getElementById('guideDetailView');
+        const fab = document.getElementById('guideFabBtn');
         if (list) list.hidden = which !== 'list';
         if (detail) detail.hidden = which !== 'detail';
+        if (fab) fab.hidden = which !== 'list';
     }
 
     updateGuideSubjectToolbar() {
@@ -1735,27 +1922,49 @@ class AcademiApp {
         const listEl = document.getElementById('guideCatalogList');
         if (!listEl) return;
         listEl.innerHTML = '';
+        const uid = this.currentUser?.id;
         if (!this.guideList.length) {
-            listEl.innerHTML = '<p class="guide-hint">No guides for this subject yet.</p>';
+            listEl.innerHTML = '<p class="guide-hint">No guides for this subject yet. Tap ＋ to create one.</p>';
             return;
         }
         for (const g of this.guideList) {
             const nSteps = (g.steps && g.steps.length) || 0;
-            const card = document.createElement('button');
-            card.type = 'button';
-            card.className = 'guide-catalog-card glass';
-            card.dataset.guideId = g.id;
+            const row = document.createElement('div');
+            row.className = 'guide-catalog-row glass';
+            const openBtn = document.createElement('button');
+            openBtn.type = 'button';
+            openBtn.className = 'guide-catalog-open';
+            openBtn.dataset.guideId = g.id;
             const title = this.escapeHtml(g.title || 'Guide');
             const desc = this.escapeHtml(g.description || '');
             const icon = this.escapeHtml(g.icon || '▸');
-            card.innerHTML = `
+            openBtn.innerHTML = `
                 <span class="guide-catalog-icon">${icon}</span>
                 <span class="guide-catalog-body">
                     <span class="guide-catalog-title">${title}</span>
                     <span class="guide-catalog-desc">${desc}</span>
                     <span class="guide-catalog-meta">${nSteps} step${nSteps === 1 ? '' : 's'}</span>
                 </span>`;
-            listEl.appendChild(card);
+            row.appendChild(openBtn);
+            const mine = g.created_by && uid && g.created_by === uid;
+            if (mine) {
+                const actions = document.createElement('div');
+                actions.className = 'guide-catalog-actions';
+                const ebtn = document.createElement('button');
+                ebtn.type = 'button';
+                ebtn.className = 'action-btn small guide-edit-btn';
+                ebtn.dataset.guideId = g.id;
+                ebtn.textContent = 'Edit';
+                const dbtn = document.createElement('button');
+                dbtn.type = 'button';
+                dbtn.className = 'action-btn small guide-delete-btn';
+                dbtn.dataset.guideId = g.id;
+                dbtn.textContent = 'Delete';
+                actions.appendChild(ebtn);
+                actions.appendChild(dbtn);
+                row.appendChild(actions);
+            }
+            listEl.appendChild(row);
         }
     }
 
@@ -1810,7 +2019,16 @@ class AcademiApp {
         const doneCount = doneList.length;
         const rawColor = typeof g.color === 'string' ? g.color.trim() : '';
         const accent = /^#[0-9A-Fa-f]{6}$/.test(rawColor) ? rawColor : '#5b8cff';
+        const uid = this.currentUser?.id;
+        const mine = g.created_by && uid && g.created_by === uid;
+        const ownerBar = mine
+            ? `<div class="guide-detail-owner-bar">
+                <button type="button" class="btn-secondary small guide-detail-edit-btn" data-guide-id="${this.escapeHtml(g.id)}">Edit</button>
+                <button type="button" class="btn-secondary small btn-danger-outline guide-detail-delete-btn" data-guide-id="${this.escapeHtml(g.id)}">Delete</button>
+            </div>`
+            : '';
         head.innerHTML = `
+            ${ownerBar}
             <div class="guide-list-heading">
                 <div class="progress-ring progress-ring--static" style="border-color: ${accent}; border-top-color: ${accent}">
                     <div class="progress-text" id="guideDetailProgressText">${doneCount}/${steps.length}</div>
@@ -1838,6 +2056,377 @@ class AcademiApp {
                 </div>`;
             stepsEl.appendChild(row);
         });
+    }
+
+    closeGuideEditorModal() {
+        const m = document.getElementById('guideEditorModal');
+        if (m) m.hidden = true;
+        this._guideEditorId = null;
+    }
+
+    populateGuideSubjectSelect() {
+        const sel = document.getElementById('guideFormSubjectSelect');
+        if (!sel) return;
+        sel.innerHTML = '';
+        for (const s of this.guideSubjects || []) {
+            const opt = document.createElement('option');
+            opt.value = s.id;
+            const icon = s.icon ? `${s.icon} ` : '';
+            opt.textContent = `${icon}${s.name || s.id}`;
+            sel.appendChild(opt);
+        }
+        if (this.guideSelectedSubject?.id) sel.value = this.guideSelectedSubject.id;
+    }
+
+    renumberGuideFormSteps() {
+        const wrap = document.getElementById('guideFormSteps');
+        if (!wrap) return;
+        [...wrap.querySelectorAll('.guide-form-step-row')].forEach((row, i) => {
+            const lab = row.querySelector('.guide-form-step-num');
+            if (lab) lab.textContent = `Step ${i + 1}`;
+        });
+    }
+
+    appendGuideFormStepRow(row) {
+        const wrap = document.getElementById('guideFormSteps');
+        if (!wrap) return;
+        const div = document.createElement('div');
+        div.className = 'guide-form-step-row';
+        const head = document.createElement('div');
+        head.className = 'guide-form-step-head';
+        const num = document.createElement('span');
+        num.className = 'guide-form-step-num';
+        const rm = document.createElement('button');
+        rm.type = 'button';
+        rm.className = 'btn-secondary small guide-form-step-remove';
+        rm.textContent = 'Remove';
+        const titleIn = document.createElement('input');
+        titleIn.type = 'text';
+        titleIn.className = 'form-input guide-step-title';
+        titleIn.placeholder = 'Step title';
+        titleIn.value = (row && row.title) || '';
+        const ta = document.createElement('textarea');
+        ta.className = 'form-textarea guide-step-content';
+        ta.rows = 2;
+        ta.placeholder = 'What to do…';
+        ta.value = (row && row.content) || '';
+        rm.addEventListener('click', () => {
+            if (wrap.querySelectorAll('.guide-form-step-row').length <= 1) return;
+            div.remove();
+            this.renumberGuideFormSteps();
+        });
+        head.appendChild(num);
+        head.appendChild(rm);
+        div.appendChild(head);
+        div.appendChild(titleIn);
+        div.appendChild(ta);
+        wrap.appendChild(div);
+        this.renumberGuideFormSteps();
+    }
+
+    renderGuideFormSteps(rows) {
+        const wrap = document.getElementById('guideFormSteps');
+        if (!wrap) return;
+        wrap.innerHTML = '';
+        const list = rows && rows.length ? rows : [{}];
+        list.forEach((r) => this.appendGuideFormStepRow(r));
+        if (!wrap.children.length) this.appendGuideFormStepRow({});
+    }
+
+    collectGuideFormSteps() {
+        const wrap = document.getElementById('guideFormSteps');
+        if (!wrap) return [];
+        return [...wrap.querySelectorAll('.guide-form-step-row')].map((row) => ({
+            id: 0,
+            title: row.querySelector('.guide-step-title')?.value?.trim() || '',
+            content: row.querySelector('.guide-step-content')?.value?.trim() || '',
+        }));
+    }
+
+    renderUserSubjectsManage() {
+        const wrap = document.getElementById('guideUserSubjectsList');
+        if (!wrap) return;
+        const uid = this.currentUser?.id;
+        const mine = (this.guideSubjects || []).filter((s) => s.created_by && uid && s.created_by === uid);
+        if (!mine.length) {
+            wrap.innerHTML =
+                '<p class="guide-hint" style="margin:0;font-size:12px">No custom subjects yet. Use “Create new subject” above.</p>';
+            return;
+        }
+        wrap.innerHTML = mine
+            .map((s) => {
+                const name = this.escapeHtml(s.name || '');
+                const sid = this.escapeHtml(s.id);
+                return `<div class="guide-user-subject-row"><span>${name}</span><div class="guide-user-subject-actions"><button type="button" class="btn-secondary small guide-user-subject-edit" data-subject-id="${sid}">Rename</button><button type="button" class="btn-secondary small btn-danger-outline guide-user-subject-delete" data-subject-id="${sid}">Delete</button></div></div>`;
+            })
+            .join('');
+    }
+
+    async openGuideEditorCreate() {
+        await this.ensureMockSession();
+        if (!this.authToken) {
+            alert('Creating guides requires signing in. Try again in a moment.');
+            return;
+        }
+        try {
+            await this.refreshGuideSubjectsFromApi();
+        } catch (e) {
+            alert(e.message || 'Could not load subjects');
+            return;
+        }
+        this._guideEditorId = null;
+        const t = document.getElementById('guideEditorModalTitle');
+        if (t) t.textContent = 'New guide';
+        const delBtn = document.getElementById('guideEditorDeleteBtn');
+        if (delBtn) delBtn.hidden = true;
+        const toggle = document.getElementById('guideFormNewSubjectToggle');
+        if (toggle) toggle.checked = false;
+        const nf = document.getElementById('guideFormNewSubjectFields');
+        if (nf) nf.hidden = true;
+        const sel = document.getElementById('guideFormSubjectSelect');
+        if (sel) sel.disabled = false;
+        this.populateGuideSubjectSelect();
+        const sn = document.getElementById('guideFormSubjectName');
+        if (sn) sn.value = '';
+        const sd = document.getElementById('guideFormSubjectDesc');
+        if (sd) sd.value = '';
+        const si = document.getElementById('guideFormSubjectIcon');
+        if (si) si.value = '';
+        const ft = document.getElementById('guideFormTitle');
+        if (ft) ft.value = '';
+        const fd = document.getElementById('guideFormDescription');
+        if (fd) fd.value = '';
+        const fc = document.getElementById('guideFormCategory');
+        if (fc) fc.value = '';
+        const fi = document.getElementById('guideFormIcon');
+        if (fi) fi.value = '';
+        const fcol = document.getElementById('guideFormColor');
+        if (fcol) fcol.value = '';
+        this.renderGuideFormSteps(null);
+        this.renderUserSubjectsManage();
+        const m = document.getElementById('guideEditorModal');
+        if (m) m.hidden = false;
+        this.closeGuideSubjectModal();
+    }
+
+    async openGuideEditorEdit(guideId) {
+        await this.ensureMockSession();
+        if (!this.authToken) {
+            alert('Session required to edit guides.');
+            return;
+        }
+        let g = this.guideList.find((x) => x.id === guideId);
+        try {
+            if (!g) {
+                const res = await fetch(`${this.apiBaseUrl}/guides/${encodeURIComponent(guideId)}`, {
+                    headers: this.guideApiHeaders(),
+                });
+                if (!res.ok) throw new Error(await readApiErrorResponse(res));
+                g = await res.json();
+            }
+        } catch (e) {
+            alert(e.message || 'Could not load guide');
+            return;
+        }
+        if (!g.created_by || g.created_by !== this.currentUser?.id) {
+            alert('You can only edit guides you created.');
+            return;
+        }
+        try {
+            await this.refreshGuideSubjectsFromApi();
+        } catch (e) {
+            alert(e.message || 'Could not load subjects');
+            return;
+        }
+        this._guideEditorId = g.id;
+        const titleEl = document.getElementById('guideEditorModalTitle');
+        if (titleEl) titleEl.textContent = 'Edit guide';
+        const delBtn = document.getElementById('guideEditorDeleteBtn');
+        if (delBtn) delBtn.hidden = false;
+        const toggle = document.getElementById('guideFormNewSubjectToggle');
+        if (toggle) toggle.checked = false;
+        const nf = document.getElementById('guideFormNewSubjectFields');
+        if (nf) nf.hidden = true;
+        const ssel = document.getElementById('guideFormSubjectSelect');
+        if (ssel) ssel.disabled = false;
+        this.populateGuideSubjectSelect();
+        if (ssel && g.subject_id) ssel.value = g.subject_id;
+        document.getElementById('guideFormTitle').value = g.title || '';
+        document.getElementById('guideFormDescription').value = g.description || '';
+        document.getElementById('guideFormCategory').value = g.category || '';
+        document.getElementById('guideFormIcon').value = g.icon || '';
+        document.getElementById('guideFormColor').value = g.color || '';
+        document.getElementById('guideFormSubjectName').value = '';
+        document.getElementById('guideFormSubjectDesc').value = '';
+        document.getElementById('guideFormSubjectIcon').value = '';
+        this.renderGuideFormSteps(g.steps || []);
+        this.renderUserSubjectsManage();
+        this.closeGuideSubjectModal();
+        document.getElementById('guideEditorModal').hidden = false;
+    }
+
+    async submitGuideEditor() {
+        await this.ensureMockSession();
+        if (!this.authToken) {
+            alert('Please wait for sign-in and try again.');
+            return;
+        }
+        let subjectId = document.getElementById('guideFormSubjectSelect')?.value || '';
+        const newSubOn = document.getElementById('guideFormNewSubjectToggle')?.checked;
+        if (newSubOn) {
+            const name = document.getElementById('guideFormSubjectName')?.value?.trim() || '';
+            if (!name) {
+                alert('Enter a name for the new subject.');
+                return;
+            }
+            const body = {
+                name,
+                description: document.getElementById('guideFormSubjectDesc')?.value?.trim() || '',
+                icon: document.getElementById('guideFormSubjectIcon')?.value?.trim() || '',
+            };
+            try {
+                const res = await fetch(`${this.apiBaseUrl}/guides/subjects`, {
+                    method: 'POST',
+                    headers: this.guideMutationHeaders(),
+                    body: JSON.stringify(body),
+                });
+                if (!res.ok) throw new Error(await readApiErrorResponse(res));
+                const sub = await res.json();
+                subjectId = sub.id;
+                await this.refreshGuideSubjectsFromApi();
+                this.populateGuideSubjectSelect();
+                this.renderUserSubjectsManage();
+            } catch (e) {
+                alert(e.message || 'Could not create subject');
+                return;
+            }
+        } else if (!subjectId) {
+            alert('Choose a subject.');
+            return;
+        }
+        const title = document.getElementById('guideFormTitle')?.value?.trim() || '';
+        const description = document.getElementById('guideFormDescription')?.value?.trim() || '';
+        if (!title || !description) {
+            alert('Title and description are required.');
+            return;
+        }
+        const stepsRaw = this.collectGuideFormSteps();
+        const payload = {
+            subject_id: subjectId,
+            title,
+            description,
+            category: document.getElementById('guideFormCategory')?.value?.trim() || '',
+            icon: document.getElementById('guideFormIcon')?.value?.trim() || '',
+            color: document.getElementById('guideFormColor')?.value?.trim() || '',
+            steps: stepsRaw,
+        };
+        try {
+            if (this._guideEditorId) {
+                const res = await fetch(`${this.apiBaseUrl}/guides/${encodeURIComponent(this._guideEditorId)}`, {
+                    method: 'PUT',
+                    headers: this.guideMutationHeaders(),
+                    body: JSON.stringify(payload),
+                });
+                if (!res.ok) throw new Error(await readApiErrorResponse(res));
+            } else {
+                const res = await fetch(`${this.apiBaseUrl}/guides`, {
+                    method: 'POST',
+                    headers: this.guideMutationHeaders(),
+                    body: JSON.stringify(payload),
+                });
+                if (!res.ok) throw new Error(await readApiErrorResponse(res));
+            }
+            this.closeGuideEditorModal();
+            await this.openGuideSubject(subjectId);
+        } catch (e) {
+            alert(e.message || 'Save failed');
+        }
+    }
+
+    async deleteUserGuide(guideId) {
+        await this.ensureMockSession();
+        try {
+            const res = await fetch(`${this.apiBaseUrl}/guides/${encodeURIComponent(guideId)}`, {
+                method: 'DELETE',
+                headers: this.guideMutationHeaders(),
+            });
+            if (!res.ok) throw new Error(await readApiErrorResponse(res));
+            if (this.guideActive?.id === guideId) {
+                this.guideActive = null;
+                this.showGuidePanel('list');
+            }
+            if (this.guideSelectedSubject) await this.openGuideSubject(this.guideSelectedSubject.id);
+            else await this.loadGuideScreen();
+        } catch (e) {
+            alert(e.message || 'Delete failed');
+        }
+    }
+
+    async deleteGuideFromEditor() {
+        if (!this._guideEditorId) return;
+        if (!window.confirm('Delete this guide permanently?')) return;
+        const id = this._guideEditorId;
+        this.closeGuideEditorModal();
+        await this.deleteUserGuide(id);
+    }
+
+    async promptEditUserSubject(subjectId) {
+        const sub = this.guideSubjects.find((s) => s.id === subjectId);
+        if (!sub) return;
+        if (!sub.created_by || sub.created_by !== this.currentUser?.id) return;
+        const name = window.prompt('Subject name', sub.name || '');
+        if (name === null) return;
+        const nt = name.trim();
+        if (!nt) return;
+        const d = window.prompt('Description (optional)', sub.description || '');
+        if (d === null) return;
+        const ic = window.prompt('Icon emoji (optional)', sub.icon || '');
+        if (ic === null) return;
+        await this.ensureMockSession();
+        try {
+            const res = await fetch(`${this.apiBaseUrl}/guides/subjects/${encodeURIComponent(subjectId)}`, {
+                method: 'PATCH',
+                headers: this.guideMutationHeaders(),
+                body: JSON.stringify({ name: nt, description: (d || '').trim(), icon: (ic || '').trim() }),
+            });
+            if (!res.ok) throw new Error(await readApiErrorResponse(res));
+            await this.refreshGuideSubjectsFromApi();
+            this.updateGuideSubjectToolbar();
+            if (this.guideSelectedSubject?.id === subjectId) {
+                const found = this.guideSubjects.find((s) => s.id === subjectId);
+                if (found) this.guideSelectedSubject = found;
+            }
+            this.populateGuideSubjectSelect();
+            this.renderUserSubjectsManage();
+            if (this.guideSelectedSubject) await this.openGuideSubject(this.guideSelectedSubject.id);
+        } catch (e) {
+            alert(e.message || 'Update failed');
+        }
+    }
+
+    async deleteUserSubject(subjectId) {
+        const sub = this.guideSubjects.find((s) => s.id === subjectId);
+        if (!sub?.created_by || sub.created_by !== this.currentUser?.id) return;
+        if (!window.confirm(`Delete subject “${sub.name}”? (Fails if any guides still use it.)`)) return;
+        await this.ensureMockSession();
+        try {
+            const res = await fetch(`${this.apiBaseUrl}/guides/subjects/${encodeURIComponent(subjectId)}`, {
+                method: 'DELETE',
+                headers: this.guideMutationHeaders(),
+            });
+            if (!res.ok) throw new Error(await readApiErrorResponse(res));
+            await this.refreshGuideSubjectsFromApi();
+            if (this.guideSelectedSubject?.id === subjectId) {
+                const next = this.guideSubjects[0];
+                this.guideSelectedSubject = next || null;
+                if (next) localStorage.setItem('academi_guide_subject_id', next.id);
+            }
+            this.updateGuideSubjectToolbar();
+            this.renderUserSubjectsManage();
+            await this.loadGuideScreen();
+        } catch (e) {
+            alert(e.message || 'Delete failed');
+        }
     }
 
     generateAIResponse(query) {

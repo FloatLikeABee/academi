@@ -23,6 +23,7 @@ const maxUploadSize = 12 << 20 // 12 MiB
 var allowedExt = map[string]struct{}{
 	".pdf": {}, ".txt": {}, ".md": {}, ".markdown": {},
 	".png": {}, ".jpg": {}, ".jpeg": {}, ".webp": {}, ".gif": {},
+	".heic": {}, ".heif": {},
 }
 
 // UploadDoc accepts multipart file + optional title. Text is extracted for PDF/txt/md; images stored for vision.
@@ -150,7 +151,7 @@ func classifyUpload(ext, detected string) (docType string, mimeType string) {
 		return "text", coalesceMime(detected, "text/plain")
 	case ".md", ".markdown":
 		return "markdown", coalesceMime(detected, "text/markdown")
-	case ".png", ".jpg", ".jpeg", ".webp", ".gif":
+	case ".png", ".jpg", ".jpeg", ".webp", ".gif", ".heic", ".heif":
 		mt := coalesceMime(detected, mimeFromExt(ext))
 		return "image", mt
 	default:
@@ -166,6 +167,10 @@ func mimeFromExt(ext string) string {
 		return "image/jpeg"
 	case ".webp":
 		return "image/webp"
+	case ".heic":
+		return "image/heic"
+	case ".heif":
+		return "image/heif"
 	case ".gif":
 		return "image/gif"
 	default:

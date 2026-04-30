@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TextInput,
-  TouchableOpacity, Image, Dimensions, ScrollView
+  TouchableOpacity, Image, Dimensions, ScrollView, Modal
 } from 'react-native';
 import Card from '../components/Card';
 import TagChip from '../components/TagChip';
@@ -49,11 +49,14 @@ const TAG_FILTERS = ["All", "#quantum", "#physics", "#math", "#biology", "#cs", 
 
 export default function CommunityScreen() {
   const { isDarkMode } = useAppStore();
+  const [posts, setPosts] = useState(mockPosts);
   const [searchTerm, setSearchTerm] = useState('');
   const [activeTag, setActiveTag] = useState('All');
   const [expandedAI, setExpandedAI] = useState({});
+  const [showComposer, setShowComposer] = useState(false);
+  const [draftPost, setDraftPost] = useState('');
 
-  const filteredPosts = mockPosts.filter(post => {
+  const filteredPosts = posts.filter(post => {
     const matchesSearch = post.content.toLowerCase().includes(searchTerm.toLowerCase()) ||
       post.author.name.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesTag = activeTag === 'All' || post.tags.includes(activeTag);
@@ -62,6 +65,34 @@ export default function CommunityScreen() {
 
   const toggleAISummary = (postId) => {
     setExpandedAI(prev => ({ ...prev, [postId]: !prev[postId] }));
+  };
+
+  const openComposer = () => setShowComposer(true);
+
+  const closeComposer = () => {
+    setShowComposer(false);
+    setDraftPost('');
+  };
+
+  const submitPost = () => {
+    const content = draftPost.trim();
+    if (!content) return;
+
+    const fallbackTag = activeTag !== 'All' ? activeTag : '#general';
+    const newPost = {
+      id: Date.now(),
+      author: { name: "You", avatar: "https://via.placeholder.com/40" },
+      content,
+      timestamp: "now",
+      tags: [fallbackTag],
+      stats: { upvotes: 0, downvotes: 0, comments: 0, shares: 0 },
+      hasAISummary: false,
+      aiSummary: "",
+      aiModerated: false,
+    };
+
+    setPosts(prev => [newPost, ...prev]);
+    closeComposer();
   };
 
   const renderPost = ({ item }) => (
@@ -175,9 +206,40 @@ export default function CommunityScreen() {
         showsVerticalScrollIndicator={false}
       />
 
-      <TouchableOpacity style={styles.fab} activeOpacity={0.8}>
+      <TouchableOpacity style={styles.fab} activeOpacity={0.8} onPress={openComposer}>
         <Text style={styles.fabText}>+</Text>
       </TouchableOpacity>
+
+      <Modal
+        visible={showComposer}
+        transparent
+        animationType="slide"
+        onRequestClose={closeComposer}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalPanel}>
+            <Text style={styles.modalTitle}>Create Post</Text>
+            <TextInput
+              style={styles.modalInput}
+              value={draftPost}
+              onChangeText={setDraftPost}
+              placeholder="Share a question, tip, or resource..."
+              placeholderTextColor="rgba(168, 178, 209, 0.7)"
+              multiline
+              maxLength={1200}
+              autoFocus
+            />
+            <View style={styles.modalActions}>
+              <TouchableOpacity style={styles.modalBtnSecondary} onPress={closeComposer} activeOpacity={0.8}>
+                <Text style={styles.modalBtnSecondaryText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.modalBtnPrimary} onPress={submitPost} activeOpacity={0.8}>
+                <Text style={styles.modalBtnPrimaryText}>Post</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -399,5 +461,67 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 28,
     fontWeight: '300',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.55)',
+    justifyContent: 'flex-end',
+  },
+  modalPanel: {
+    backgroundColor: '#111A2F',
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
+    paddingHorizontal: 16,
+    paddingTop: 14,
+    paddingBottom: 24,
+    borderTopWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  modalTitle: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '700',
+    marginBottom: 12,
+  },
+  modalInput: {
+    minHeight: 120,
+    maxHeight: 220,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    borderColor: 'rgba(255,255,255,0.12)',
+    borderWidth: 1,
+    borderRadius: 12,
+    color: '#FFFFFF',
+    fontSize: 15,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    textAlignVertical: 'top',
+  },
+  modalActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 10,
+    marginTop: 12,
+  },
+  modalBtnSecondary: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
+    backgroundColor: 'rgba(255,255,255,0.04)',
+  },
+  modalBtnSecondaryText: {
+    color: '#A8B2D1',
+    fontWeight: '600',
+  },
+  modalBtnPrimary: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: '#5B8CFF',
+  },
+  modalBtnPrimaryText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
   },
 });

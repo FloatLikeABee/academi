@@ -4,12 +4,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
+	"github.com/academi/backend/internal/auth"
 	"github.com/academi/backend/internal/database"
 	"github.com/academi/backend/internal/models"
 )
@@ -24,6 +26,60 @@ func NewService() *Service {
 
 func subjectKey(id string) []byte {
 	return []byte("guide_subject:" + id)
+}
+
+func normalizeGuideSteps(steps []models.GuideStep) []models.GuideStep {
+	out := make([]models.GuideStep, 0, len(steps))
+	id := 1
+	for _, st := range steps {
+		t := strings.TrimSpace(st.Title)
+		body := strings.TrimSpace(st.Content)
+		if t == "" && body == "" {
+			continue
+		}
+		out = append(out, models.GuideStep{ID: id, Title: t, Content: body})
+		id++
+	}
+	return out
+}
+
+func maxSubjectSortOrder() int {
+	max := 0
+	_ = database.Iterate([]byte("guide_subject:"), func(key, value []byte) error {
+		var sub models.GuideSubject
+		if json.Unmarshal(value, &sub) == nil && sub.SortOrder > max {
+			max = sub.SortOrder
+		}
+		return nil
+	})
+	return max
+}
+
+func countGuidesForSubject(subjectID string) int {
+	n := 0
+	_ = database.Iterate([]byte("guide:"), func(key, value []byte) error {
+		var g models.Guide
+		if json.Unmarshal(value, &g) != nil {
+			return nil
+		}
+		if g.SubjectID == subjectID {
+			n++
+		}
+		return nil
+	})
+	return n
+}
+
+func loadSubject(id string) (*models.GuideSubject, error) {
+	data, err := database.Get(subjectKey(id))
+	if err != nil {
+		return nil, err
+	}
+	var sub models.GuideSubject
+	if err := json.Unmarshal(data, &sub); err != nil {
+		return nil, err
+	}
+	return &sub, nil
 }
 
 func (s *Service) ensureSeeded() {
@@ -159,22 +215,34 @@ func (s *Service) ListSubjects(c *gin.Context) {
 }
 
 func (s *Service) CreateGuide(c *gin.Context) {
+	userID := auth.GetUserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
 	var req models.CreateGuideRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
+	steps := normalizeGuideSteps(req.Steps)
+	if len(steps) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "at least one step is required"})
+		return
+	}
+
 	guide := models.Guide{
 		ID:          uuid.New().String(),
-		SubjectID:   req.SubjectID,
-		Title:       req.Title,
-		Description: req.Description,
-		Category:    req.Category,
-		Icon:        req.Icon,
-		Color:       req.Color,
-		Steps:       req.Steps,
+		SubjectID:   strings.TrimSpace(req.SubjectID),
+		Title:       strings.TrimSpace(req.Title),
+		Description: strings.TrimSpace(req.Description),
+		Category:    strings.TrimSpace(req.Category),
+		Icon:        strings.TrimSpace(req.Icon),
+		Color:       strings.TrimSpace(req.Color),
+		Steps:       steps,
 		CreatedAt:   time.Now().Unix(),
+		CreatedBy:   userID,
 	}
 
 	data, _ := json.Marshal(guide)
@@ -184,6 +252,153 @@ func (s *Service) CreateGuide(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusCreated, guide)
+}
+
+func (s *Service) UpdateGuide(c *gin.Context) {
+	userID := auth.GetUserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+	guideID := c.Param("id")
+	data, err := database.Get([]byte("guide:" + guideID))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Guide not found"})
+		return
+	}
+	var existing models.Guide
+	if json.Unmarshal(data, &existing) != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Guide not found"})
+		return
+	}
+	if existing.CreatedBy != userID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "You can only edit guides you created"})
+		return
+	}
+
+	var req models.UpdateGuideRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	steps := normalizeGuideSteps(req.Steps)
+	if len(steps) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "at least one step is required"})
+		return
+	}
+
+	existing.SubjectID = strings.TrimSpace(req.SubjectID)
+	existing.Title = strings.TrimSpace(req.Title)
+	existing.Description = strings.TrimSpace(req.Description)
+	existing.Category = strings.TrimSpace(req.Category)
+	existing.Icon = strings.TrimSpace(req.Icon)
+	existing.Color = strings.TrimSpace(req.Color)
+	existing.Steps = steps
+
+	out, _ := json.Marshal(existing)
+	if err := database.Set([]byte("guide:"+guideID), out); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update guide"})
+		return
+	}
+	c.JSON(http.StatusOK, existing)
+}
+
+func (s *Service) CreateSubject(c *gin.Context) {
+	userID := auth.GetUserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+	var req models.CreateSubjectRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "name is required"})
+		return
+	}
+	s.ensureSeeded()
+	sub := models.GuideSubject{
+		ID:          uuid.New().String(),
+		Name:        name,
+		Description: strings.TrimSpace(req.Description),
+		Icon:        strings.TrimSpace(req.Icon),
+		SortOrder:   maxSubjectSortOrder() + 10,
+		CreatedAt:   time.Now().Unix(),
+		CreatedBy:   userID,
+	}
+	raw, _ := json.Marshal(sub)
+	if err := database.Set(subjectKey(sub.ID), raw); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create subject"})
+		return
+	}
+	c.JSON(http.StatusCreated, sub)
+}
+
+func (s *Service) UpdateSubject(c *gin.Context) {
+	userID := auth.GetUserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+	subjectID := c.Param("subjectId")
+	sub, err := loadSubject(subjectID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Subject not found"})
+		return
+	}
+	if sub.CreatedBy != userID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "You can only edit subjects you created"})
+		return
+	}
+	var req models.UpdateSubjectRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "name is required"})
+		return
+	}
+	sub.Name = name
+	sub.Description = strings.TrimSpace(req.Description)
+	sub.Icon = strings.TrimSpace(req.Icon)
+	raw, _ := json.Marshal(sub)
+	if err := database.Set(subjectKey(sub.ID), raw); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update subject"})
+		return
+	}
+	c.JSON(http.StatusOK, sub)
+}
+
+func (s *Service) DeleteSubject(c *gin.Context) {
+	userID := auth.GetUserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+	subjectID := c.Param("subjectId")
+	sub, err := loadSubject(subjectID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Subject not found"})
+		return
+	}
+	if sub.CreatedBy != userID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "You can only delete subjects you created"})
+		return
+	}
+	if countGuidesForSubject(subjectID) > 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Remove or reassign guides under this subject before deleting it"})
+		return
+	}
+	if err := database.Delete(subjectKey(subjectID)); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete subject"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "Subject deleted"})
 }
 
 func (s *Service) GetGuide(c *gin.Context) {
@@ -225,13 +440,30 @@ func (s *Service) ListGuides(c *gin.Context) {
 }
 
 func (s *Service) DeleteGuide(c *gin.Context) {
+	userID := auth.GetUserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
 	guideID := c.Param("id")
-
-	if err := database.Delete([]byte("guide:" + guideID)); err != nil {
+	data, err := database.Get([]byte("guide:" + guideID))
+	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Guide not found"})
 		return
 	}
-
+	var g models.Guide
+	if json.Unmarshal(data, &g) != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Guide not found"})
+		return
+	}
+	if g.CreatedBy != userID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "You can only delete guides you created"})
+		return
+	}
+	if err := database.Delete([]byte("guide:" + guideID)); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete"})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"message": "Guide deleted"})
 }
 
@@ -301,12 +533,20 @@ func (s *Service) UpdateProgress(c *gin.Context) {
 }
 
 // RegisterRoutes mounts handlers on a group whose path is already /guides (e.g. /api/v1/guides).
-func (s *Service) RegisterRoutes(r *gin.RouterGroup) {
+// auth is required for create/update/delete of guides and subjects.
+func (s *Service) RegisterRoutes(r *gin.RouterGroup, auth gin.HandlerFunc) {
 	r.GET("/subjects", s.ListSubjects)
-	r.POST("", s.CreateGuide)
 	r.GET("", s.ListGuides)
-	r.GET("/:id", s.GetGuide)
-	r.DELETE("/:id", s.DeleteGuide)
 	r.GET("/:id/progress/:userId", s.GetProgress)
 	r.POST("/:id/progress/:userId", s.UpdateProgress)
+	r.GET("/:id", s.GetGuide)
+
+	a := r.Group("")
+	a.Use(auth)
+	a.POST("/subjects", s.CreateSubject)
+	a.PATCH("/subjects/:subjectId", s.UpdateSubject)
+	a.DELETE("/subjects/:subjectId", s.DeleteSubject)
+	a.POST("", s.CreateGuide)
+	a.PUT("/:id", s.UpdateGuide)
+	a.DELETE("/:id", s.DeleteGuide)
 }

@@ -72,8 +72,7 @@ func main() {
 
 		guideSvc := guide.NewService()
 		guideRoutes := api.Group("/guides")
-		// Public for web app (subjects + guides); tighten for production if needed
-		guideSvc.RegisterRoutes(guideRoutes)
+		guideSvc.RegisterRoutes(guideRoutes, jwt)
 
 		notifSvc := notifications.NewService()
 		notifRoutes := api.Group("/notifications")
