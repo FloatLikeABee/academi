@@ -13,63 +13,115 @@ const mockGuides = [
     title: "Write a Research Paper",
     description: "Step-by-step guide to crafting an academic research paper",
     steps: 7,
-    progress: 60,
+    progress: 0,
     category: "Writing",
     icon: "📝",
     color: "#5B8CFF",
+    stepItems: [
+      "Choose a research topic",
+      "Conduct preliminary research",
+      "Create an outline",
+      "Write a thesis statement",
+      "Draft the introduction",
+      "Write body paragraphs",
+      "Write conclusion and edit",
+    ],
   },
   {
     id: 2,
     title: "Learn Calculus in 7 Days",
     description: "Master calculus concepts with daily practice problems",
     steps: 7,
-    progress: 40,
+    progress: 0,
     category: "Mathematics",
     icon: "📊",
     color: "#9B6DFF",
+    stepItems: [
+      "Day 1: Limits and continuity",
+      "Day 2: Derivative definition",
+      "Day 3: Differentiation rules",
+      "Day 4: Applications of derivatives",
+      "Day 5: Introduction to integrals",
+      "Day 6: Integration techniques",
+      "Day 7: Review problem set",
+    ],
   },
   {
     id: 3,
     title: "Prepare for SAT Exam",
     description: "Comprehensive SAT preparation strategy and practice",
     steps: 10,
-    progress: 25,
+    progress: 0,
     category: "Test Prep",
     icon: "📚",
     color: "#00D4FF",
+    stepItems: [
+      "Diagnostic practice test",
+      "Reading: evidence questions",
+      "Writing: grammar rules",
+      "Math: algebra fundamentals",
+      "Math: problem solving & data",
+      "Full practice test 1",
+      "Review missed questions",
+      "Timed section drills",
+      "Essay structure (if applicable)",
+      "Final confidence review",
+    ],
   },
 ];
 
-const defaultGuideSteps = [
-  { id: 1, title: "Choose a research topic", completed: true },
-  { id: 2, title: "Conduct preliminary research", completed: true },
-  { id: 3, title: "Create an outline", completed: true },
-  { id: 4, title: "Write a thesis statement", completed: true },
-  { id: 5, title: "Draft the introduction", completed: false },
-  { id: 6, title: "Write body paragraphs", completed: false },
-  { id: 7, title: "Write conclusion and edit", completed: false },
-];
+function buildInitialSteps(guide) {
+  const titles = guide.stepItems && guide.stepItems.length ? guide.stepItems : Array.from({ length: guide.steps || 0 }, (_, i) => `Step ${i + 1}`);
+  return titles.map((title, i) => ({
+    id: i + 1,
+    title,
+    completed: false,
+  }));
+}
 
 export default function GuideScreen() {
   const [activeGuide, setActiveGuide] = useState(null);
-  const [guideSteps, setGuideSteps] = useState(defaultGuideSteps);
+  /** @type {{ [guideId: string]: { id: number, title: string, completed: boolean }[] }} */
+  const [stepsByGuideId, setStepsByGuideId] = useState({});
 
   const startGuide = (guide) => {
     setActiveGuide(guide);
+    setStepsByGuideId((prev) => {
+      if (prev[guide.id]) return prev;
+      return { ...prev, [guide.id]: buildInitialSteps(guide) };
+    });
   };
 
-  const toggleStep = (stepId) => {
-    setGuideSteps(prev =>
-      prev.map(step =>
-        step.id === stepId ? { ...step, completed: !step.completed } : step
-      )
-    );
+  const guideSteps = activeGuide ? stepsByGuideId[activeGuide.id] || [] : [];
+
+  const toggleStep = (guideId, stepId) => {
+    setStepsByGuideId((prev) => ({
+      ...prev,
+      [guideId]: (prev[guideId] || []).map((step) =>
+        step.id === stepId ? { ...step, completed: !step.completed } : step,
+      ),
+    }));
   };
 
-  const currentProgress = useMemo(() => {
-    const completedCount = guideSteps.filter(step => step.completed).length;
-    return Math.round((completedCount / guideSteps.length) * 100);
-  }, [guideSteps]);
+  const completedCount = useMemo(
+    () => guideSteps.filter((step) => step.completed).length,
+    [guideSteps],
+  );
+
+  const totalSteps = guideSteps.length || 1;
+
+  const currentProgress = useMemo(
+    () => Math.round((completedCount / totalSteps) * 100),
+    [completedCount, totalSteps],
+  );
+
+  const listProgress = (guide) => {
+    const list = stepsByGuideId[guide.id];
+    const total = list?.length || guide.steps || 1;
+    const done = list?.filter((s) => s.completed).length || 0;
+    const pct = total ? Math.round((done / total) * 100) : 0;
+    return { done, total, pct };
+  };
 
   if (activeGuide) {
     return (
@@ -85,13 +137,17 @@ export default function GuideScreen() {
           <Text style={styles.guideDescription}>{activeGuide.description}</Text>
         </View>
 
-        <View style={styles.progressSection}>
+          <View style={styles.progressSection}>
           <View style={styles.progressRingOuter}>
             <View style={[styles.progressRing, { borderColor: activeGuide.color }]}>
-              <Text style={[styles.progressText, { color: activeGuide.color }]}>{currentProgress}%</Text>
+              <Text style={[styles.progressText, { color: activeGuide.color }]}>
+                {completedCount}/{totalSteps}
+              </Text>
             </View>
           </View>
-          <Text style={styles.progressLabel}>{guideSteps.filter(s => s.completed).length} of {guideSteps.length} steps</Text>
+          <Text style={styles.progressLabel}>
+            {completedCount} of {totalSteps} steps ({currentProgress}%)
+          </Text>
         </View>
 
         <View style={styles.timelineContainer}>
@@ -99,7 +155,7 @@ export default function GuideScreen() {
             <TouchableOpacity
               key={step.id}
               style={[styles.stepItem, step.completed && styles.stepCompleted]}
-              onPress={() => toggleStep(step.id)}
+              onPress={() => toggleStep(activeGuide.id, step.id)}
               activeOpacity={0.7}
             >
               <View style={styles.timelineLine}>
@@ -140,31 +196,36 @@ export default function GuideScreen() {
         data={mockGuides}
         keyExtractor={item => item.id.toString()}
         contentContainerStyle={styles.guidesContentContainer}
-        renderItem={({ item }) => (
-          <TouchableOpacity
-            style={styles.guideCard}
-            onPress={() => startGuide(item)}
-            activeOpacity={0.8}
-          >
-            <View style={styles.guideCardContent}>
-              <View style={styles.guideCardHeader}>
-                <Text style={styles.guideCardIcon}>{item.icon}</Text>
-                <View style={styles.guideCardInfo}>
-                  <Text style={styles.guideCardTitle}>{item.title}</Text>
-                  <Text style={styles.guideCardCategory}>{item.category}</Text>
+        renderItem={({ item }) => {
+          const { done, total, pct } = listProgress(item);
+          return (
+            <TouchableOpacity
+              style={styles.guideCard}
+              onPress={() => startGuide(item)}
+              activeOpacity={0.8}
+            >
+              <View style={styles.guideCardContent}>
+                <View style={styles.guideCardHeader}>
+                  <Text style={styles.guideCardIcon}>{item.icon}</Text>
+                  <View style={styles.guideCardInfo}>
+                    <Text style={styles.guideCardTitle}>{item.title}</Text>
+                    <Text style={styles.guideCardCategory}>{item.category}</Text>
+                  </View>
+                </View>
+                <Text style={styles.guideCardDescription}>{item.description}</Text>
+                <View style={styles.guideCardFooter}>
+                  <Text style={styles.guideCardSteps}>
+                    {done}/{total}
+                  </Text>
+                  <View style={styles.progressBarContainer}>
+                    <View style={[styles.progressBar, { width: `${pct}%`, backgroundColor: item.color }]} />
+                  </View>
+                  <Text style={styles.progressPercentage}>{pct}%</Text>
                 </View>
               </View>
-              <Text style={styles.guideCardDescription}>{item.description}</Text>
-              <View style={styles.guideCardFooter}>
-                <Text style={styles.guideCardSteps}>{item.steps} steps</Text>
-                <View style={styles.progressBarContainer}>
-                  <View style={[styles.progressBar, { width: `${item.progress}%`, backgroundColor: item.color }]} />
-                </View>
-                <Text style={styles.progressPercentage}>{item.progress}%</Text>
-              </View>
-            </View>
-          </TouchableOpacity>
-        )}
+            </TouchableOpacity>
+          );
+        }}
       />
     </View>
   );

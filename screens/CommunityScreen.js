@@ -1,11 +1,17 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TextInput,
   TouchableOpacity, Image, Dimensions, ScrollView, Modal
 } from 'react-native';
-import Card from '../components/Card';
+import { useNavigation } from '@react-navigation/native';
 import TagChip from '../components/TagChip';
 import useAppStore from '../store/appStore';
+import {
+  getAcademiApiBaseUrl,
+  ensureAcademiSession,
+  getAcademiToken,
+  fetchCommunityPosts,
+} from '../services/academiApi';
 
 const { width } = Dimensions.get('window');
 
@@ -47,14 +53,62 @@ const mockPosts = [
 
 const TAG_FILTERS = ["All", "#quantum", "#physics", "#math", "#biology", "#cs", "#chemistry"];
 
+function formatPostTime(ts) {
+  if (!ts) return '';
+  try {
+    return new Date(ts * 1000).toLocaleString();
+  } catch {
+    return '';
+  }
+}
+
+function mapApiPost(p) {
+  return {
+    id: p.id,
+    author: { name: p.author_name || 'Member', avatar: 'https://via.placeholder.com/40' },
+    content: p.content || '',
+    timestamp: formatPostTime(p.created_at),
+    tags: Array.isArray(p.tags) ? p.tags : [],
+    stats: {
+      upvotes: p.upvotes ?? 0,
+      downvotes: p.downvotes ?? 0,
+      comments: p.comments ?? 0,
+      shares: 0,
+    },
+    doc_id: p.doc_id || null,
+    hasAISummary: false,
+    aiSummary: '',
+    aiModerated: false,
+  };
+}
+
 export default function CommunityScreen() {
   const { isDarkMode } = useAppStore();
+  const navigation = useNavigation();
+  const apiBaseRef = useRef(getAcademiApiBaseUrl());
   const [posts, setPosts] = useState(mockPosts);
   const [searchTerm, setSearchTerm] = useState('');
   const [activeTag, setActiveTag] = useState('All');
   const [expandedAI, setExpandedAI] = useState({});
   const [showComposer, setShowComposer] = useState(false);
   const [draftPost, setDraftPost] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        await ensureAcademiSession(apiBaseRef.current);
+        const raw = await fetchCommunityPosts(apiBaseRef.current, getAcademiToken());
+        if (cancelled || !Array.isArray(raw) || raw.length === 0) return;
+        setPosts(raw.map(mapApiPost));
+      } catch {
+        /* keep mock feed when offline */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const filteredPosts = posts.filter(post => {
     const matchesSearch = post.content.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -117,6 +171,16 @@ export default function CommunityScreen() {
           <TagChip key={index} label={tag} variant="active" />
         ))}
       </View>
+
+      {item.doc_id ? (
+        <TouchableOpacity
+          style={styles.openInDocsBtn}
+          onPress={() => navigation.navigate('Docs', { openDocId: item.doc_id })}
+          activeOpacity={0.75}
+        >
+          <Text style={styles.openInDocsBtnText}>Open in Docs</Text>
+        </TouchableOpacity>
+      ) : null}
 
       {item.hasAISummary && (
         <TouchableOpacity
@@ -355,6 +419,21 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     marginBottom: 12,
+  },
+  openInDocsBtn: {
+    alignSelf: 'flex-start',
+    marginBottom: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(91, 140, 255, 0.5)',
+    backgroundColor: 'rgba(91, 140, 255, 0.12)',
+  },
+  openInDocsBtnText: {
+    color: '#5B8CFF',
+    fontSize: 12,
+    fontWeight: '700',
   },
   aiSummaryButton: {
     flexDirection: 'row',

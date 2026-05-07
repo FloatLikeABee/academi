@@ -7,7 +7,7 @@
     <meta name="academi-api-port" content="8978">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
     <title>Academi - AI Study Assistant</title>
-    <link rel="stylesheet" href="styles.css?v=6">
+    <link rel="stylesheet" href="styles.css?v=10">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 </head>
 <body>
@@ -273,8 +273,11 @@
                 <h3 id="learnModalHeading">Help you learn</h3>
                 <button type="button" class="doc-modal-close" id="learnModalClose" aria-label="Close">✕</button>
             </div>
-            <pre class="doc-modal-body" id="learnModalBody"></pre>
+            <div class="doc-modal-body doc-modal-body--md learn-modal-body" id="learnModalBody"></div>
             <div class="learn-modal-actions">
+                <button type="button" class="btn-secondary" id="learnModalBackground" hidden title="Close and notify when the analysis is ready">
+                    Run in background
+                </button>
                 <button type="button" class="btn-secondary" id="learnModalDismiss">Close</button>
                 <button type="button" class="btn-primary" id="learnModalSaveDoc">Save analysis to Docs</button>
             </div>
@@ -398,6 +401,8 @@
         </div>
     </div>
 
-    <script src="script.js?v=6"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked@11.1.1/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.8/dist/purify.min.js"></script>
+    <script src="script.js?v=9" defer></script>
 </body>
 </html>

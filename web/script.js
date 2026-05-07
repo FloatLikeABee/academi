@@ -50,6 +50,33 @@ async function readApiErrorResponse(res) {
     return hint || `Request failed (${res.status})`;
 }
 
+function renderLearnModalBody(el, text, mode) {
+    if (!el) return;
+    if (mode === 'loading') {
+        el.classList.remove('doc-modal-body--md');
+        el.removeAttribute('style');
+        el.innerHTML = '';
+        el.textContent = text || '';
+        return;
+    }
+    if (mode === 'plain') {
+        el.classList.remove('doc-modal-body--md');
+        el.style.whiteSpace = 'pre-wrap';
+        el.innerHTML = '';
+        el.textContent = text || '';
+        return;
+    }
+    el.removeAttribute('style');
+    el.classList.add('doc-modal-body--md');
+    const raw = text || '';
+    if (typeof marked === 'undefined' || typeof DOMPurify === 'undefined') {
+        el.textContent = raw;
+        return;
+    }
+    const html = marked.parse(raw, { gfm: true, breaks: true });
+    el.innerHTML = DOMPurify.sanitize(html);
+}
+
 class AcademiApp {
     constructor() {
         this.currentScreen = 'chat';
@@ -73,6 +100,10 @@ class AcademiApp {
         this._statusResetTimer = null;
         this._learnAnalysisText = '';
         this._learnAnalysisTitle = 'Learning analysis';
+        this._learnJobSeq = 0;
+        this._learnFetchPending = false;
+        this._learnWantNotifyForJobId = null;
+        this._learnLastAnalysisOk = true;
         this.currentSessionId = null;
         this._persistTimer = null;
         this.guideSubjects = [];
@@ -210,6 +241,10 @@ class AcademiApp {
         document.getElementById('learnModalClose')?.addEventListener('click', () => this.closeLearnModal());
         document.getElementById('learnModalBackdrop')?.addEventListener('click', () => this.closeLearnModal());
         document.getElementById('learnModalDismiss')?.addEventListener('click', () => this.closeLearnModal());
+        document.getElementById('learnModalBackground')?.addEventListener('click', () => {
+            this.requestLearnNotificationFromGesture();
+            this.closeLearnModal();
+        });
         document.getElementById('learnModalSaveDoc')?.addEventListener('click', () => this.saveLearnAnalysisToDocs());
 
         document.getElementById('docsGrid')?.addEventListener('click', (e) => {
@@ -379,10 +414,12 @@ class AcademiApp {
         document.getElementById('guideDetailSteps')?.addEventListener('change', (e) => {
             const cb = e.target.closest('input[type="checkbox"].guide-step-check');
             if (!cb || !this.guideActive) return;
-            const stepId = Number(cb.dataset.stepId || 0);
-            if (!stepId) return;
+            const raw = cb.getAttribute('data-step-id');
+            const stepId = raw != null && raw !== '' ? Number(raw) : NaN;
+            if (!Number.isFinite(stepId)) return;
             this.setGuideStepDone(this.guideActive.id, stepId, cb.checked);
             this.refreshGuideDetailProgress();
+            this.renderGuideCatalog();
         });
 
         document.getElementById('communityAddPostBtn')?.addEventListener('click', () => this.openCommunityCreateModal());
@@ -416,9 +453,7 @@ class AcademiApp {
             if (od?.dataset?.docId) {
                 e.preventDefault();
                 const id = od.dataset.docId;
-                this.closeCommunityPostDetailModal();
-                this.switchScreen('docs');
-                void this.loadDocs().then(() => this.openDocModal(id));
+                void this.openDocFromCommunity(id);
             }
         });
 
@@ -995,16 +1030,120 @@ class AcademiApp {
         }
     }
 
+    requestLearnNotificationFromGesture() {
+        try {
+            if (typeof Notification === 'undefined') return;
+            if (Notification.permission === 'default') {
+                void Notification.requestPermission();
+            }
+        } catch (_) {
+            /* ignore */
+        }
+    }
+
+    setLearnModalAnalyzingUI(analyzing) {
+        const bgBtn = document.getElementById('learnModalBackground');
+        const saveBtn = document.getElementById('learnModalSaveDoc');
+        if (bgBtn) bgBtn.hidden = !analyzing;
+        if (saveBtn) {
+            const showSave = !analyzing && this._learnLastAnalysisOk !== false;
+            saveBtn.hidden = !showSave;
+            saveBtn.disabled = analyzing || !showSave;
+        }
+    }
+
+    reopenLearnResultsModal() {
+        const learnModal = document.getElementById('learnModal');
+        const bodyEl = document.getElementById('learnModalBody');
+        const heading = document.getElementById('learnModalHeading');
+        if (heading) heading.textContent = this._learnAnalysisTitle || 'Help you learn';
+        const bodyMode = this._learnLastAnalysisOk !== false ? 'markdown' : 'plain';
+        renderLearnModalBody(bodyEl, this._learnAnalysisText || '', bodyMode);
+        this.setLearnModalAnalyzingUI(false);
+        if (learnModal) learnModal.hidden = false;
+    }
+
+    maybeNotifyLearnFinished(ok, titleLine, errMsg) {
+        const docLabel = titleLine || 'Document';
+        const canNotify = typeof Notification !== 'undefined' && Notification.permission === 'granted';
+        if (canNotify) {
+            try {
+                const n = new Notification(ok ? 'Help you learn — ready' : 'Help you learn — error', {
+                    body: ok ? `Analysis finished for “${docLabel}”. Tap to view.` : (errMsg || 'Analysis failed.'),
+                    tag: 'academi-learn-finished',
+                });
+                n.onclick = () => {
+                    try {
+                        n.close();
+                    } catch (_) {
+                        /* ignore */
+                    }
+                    window.focus();
+                    this.reopenLearnResultsModal();
+                };
+            } catch (e) {
+                console.warn('Notification failed', e);
+                this.flashStatus(
+                    ok ? `Learning analysis ready — open Help you learn for “${docLabel}”.` : (errMsg || 'Analysis failed.'),
+                );
+            }
+            return;
+        }
+        this.flashStatus(
+            ok
+                ? `Learning analysis ready for “${docLabel}” — open Docs and tap Help you learn to view.`
+                : errMsg || 'Analysis failed.',
+        );
+    }
+
     async runLearnForDoc(docId) {
         const doc = this.docsList.find((d) => d.id === docId);
+        const jobId = ++this._learnJobSeq;
+        this._learnFetchPending = true;
+        this._learnWantNotifyForJobId = null;
+
         const headers = { 'Content-Type': 'application/json', Accept: 'application/json' };
         if (this.authToken) headers['Authorization'] = `Bearer ${this.authToken}`;
         const learnModal = document.getElementById('learnModal');
         const bodyEl = document.getElementById('learnModalBody');
         const heading = document.getElementById('learnModalHeading');
+        const headingDocTitle = doc ? doc.title : 'Document';
         if (heading) heading.textContent = doc ? `Help you learn · ${doc.title}` : 'Help you learn';
-        if (bodyEl) bodyEl.textContent = 'Analyzing…';
+        renderLearnModalBody(bodyEl, 'Analyzing…', 'loading');
+        this.setLearnModalAnalyzingUI(true);
         if (learnModal) learnModal.hidden = false;
+
+        const finish = (ok, textOrErr) => {
+            if (jobId !== this._learnJobSeq) return;
+
+            this._learnFetchPending = false;
+            this._learnLastAnalysisOk = ok;
+            const modalHidden = !learnModal || learnModal.hidden;
+            const tabHidden = document.visibilityState === 'hidden';
+            const dismissedThisJob = this._learnWantNotifyForJobId === jobId;
+            const shouldNotify = tabHidden || dismissedThisJob || modalHidden;
+
+            if (ok) {
+                this._learnAnalysisText = textOrErr || '';
+                this._learnAnalysisTitle = `Learning: ${headingDocTitle}`;
+                renderLearnModalBody(bodyEl, this._learnAnalysisText, 'markdown');
+            } else {
+                const err = textOrErr || 'Error';
+                this._learnAnalysisText = err;
+                this._learnAnalysisTitle = `Help you learn · ${headingDocTitle}`;
+                renderLearnModalBody(bodyEl, err, 'plain');
+            }
+
+            this.setLearnModalAnalyzingUI(false);
+            if (this._learnWantNotifyForJobId === jobId) {
+                this._learnWantNotifyForJobId = null;
+            }
+
+            if (shouldNotify) {
+                this.maybeNotifyLearnFinished(ok, headingDocTitle, ok ? null : String(textOrErr || 'Error'));
+            }
+        };
+
         try {
             const res = await fetch(`${this.apiBaseUrl}/ai/learn`, {
                 method: 'POST',
@@ -1014,21 +1153,29 @@ class AcademiApp {
                     disable_research: !this.researchEnabled,
                 }),
             });
+            if (jobId !== this._learnJobSeq) return;
+
             if (!res.ok) {
                 const err = await res.json().catch(() => ({}));
                 throw new Error(err.error || 'Analysis failed');
             }
             const data = await res.json();
-            this._learnAnalysisText = data.response || '';
-            this._learnAnalysisTitle = `Learning: ${doc ? doc.title : 'Document'}`;
-            if (bodyEl) bodyEl.textContent = this._learnAnalysisText;
+            finish(true, data.response || '');
         } catch (e) {
             console.error(e);
-            if (bodyEl) bodyEl.textContent = e.message || 'Error';
+            if (jobId !== this._learnJobSeq) return;
+            finish(false, e.message || 'Error');
         }
     }
 
     closeLearnModal() {
+        if (this._learnFetchPending) {
+            const id = this._learnJobSeq;
+            if (id > 0) {
+                this._learnWantNotifyForJobId = id;
+                this.requestLearnNotificationFromGesture();
+            }
+        }
         document.getElementById('learnModal').hidden = true;
     }
 
@@ -1508,30 +1655,95 @@ class AcademiApp {
         }
     }
 
+    mergeDocIntoList(doc) {
+        if (!doc || !doc.id) return;
+        const id = String(doc.id);
+        const i = this.docsList.findIndex((d) => String(d.id) === id);
+        if (i >= 0) {
+            this.docsList[i] = { ...this.docsList[i], ...doc };
+        } else {
+            this.docsList.push(doc);
+        }
+    }
+
+    async fetchDocFromApiForViewer(docId) {
+        const headers = { Accept: 'application/json' };
+        if (this.authToken) headers['Authorization'] = `Bearer ${this.authToken}`;
+        const res = await fetch(`${this.apiBaseUrl}/docs/${encodeURIComponent(docId)}`, { headers });
+        if (!res.ok) throw new Error(await readApiErrorResponse(res));
+        return res.json();
+    }
+
+    async openDocFromCommunity(docId) {
+        const id = String(docId || '').trim();
+        if (!id) return;
+        this.closeCommunityPostDetailModal();
+        this.switchScreen('docs');
+        this.flashStatus('Downloading document…');
+        try {
+            await this.ensureMockSession();
+            await this.loadDocs();
+            const full = await this.fetchDocFromApiForViewer(id);
+            this.mergeDocIntoList(full);
+            const q = document.getElementById('docSearch')?.value?.trim() || '';
+            this.renderDocsGrid(q);
+            await this.openDocModal(id);
+            this.flashStatus('Opened in Docs');
+        } catch (e) {
+            console.error(e);
+            alert(e.message || 'Could not download document');
+            this.updateUI();
+        }
+    }
+
     async openDocModal(docId) {
-        let doc = this.docsList.find((d) => d.id === docId);
+        let doc = this.docsList.find((d) => String(d.id) === String(docId));
         const modal = document.getElementById('docModal');
         const titleEl = document.getElementById('docModalTitle');
         const bodyEl = document.getElementById('docModalBody');
         if (!modal || !titleEl || !bodyEl) return;
 
-        if (!doc || !doc.content) {
+        const typ = (doc?.type || '').toLowerCase();
+        const needsFetch =
+            !doc ||
+            (['markdown', 'text'].includes(typ) && !String(doc.content || '').trim()) ||
+            (typ === 'pdf' && !doc.stored_filename && !String(doc.content || '').trim());
+
+        if (needsFetch) {
             try {
-                const headers = { Accept: 'application/json' };
-                if (this.authToken) headers['Authorization'] = `Bearer ${this.authToken}`;
-                const res = await fetch(`${this.apiBaseUrl}/docs/${encodeURIComponent(docId)}`, { headers });
-                if (res.ok) doc = await res.json();
+                doc = await this.fetchDocFromApiForViewer(docId);
+                this.mergeDocIntoList(doc);
             } catch (e) {
                 console.error(e);
+                alert(e.message || 'Could not load document');
+                return;
             }
         }
-        if (!doc) return;
+        if (!doc) {
+            alert('Document not found');
+            return;
+        }
 
+        const t = (doc.type || '').toLowerCase();
         titleEl.textContent = doc.title || 'Document';
-        if ((doc.type || '').toLowerCase() === 'image' && doc.id) {
+        if (t === 'image' && doc.id) {
             const url = `${this.apiBaseUrl}/docs/${encodeURIComponent(doc.id)}/file`;
             bodyEl.classList.remove('doc-modal-body--md');
-            bodyEl.textContent = `${doc.ai_summary || 'Image document.'}\n\nFile (open in browser): ${url}`;
+            const summary = this.escapeHtml(doc.ai_summary || 'Image document.');
+            const safeUrl = this.escapeHtml(url);
+            bodyEl.innerHTML = `<p class="doc-file-summary">${summary}</p>
+                <div class="doc-open-external-wrap">
+                    <a href="${safeUrl}" target="_blank" rel="noopener noreferrer" class="btn-primary">Open in browser</a>
+                </div>`;
+        } else if (t === 'pdf' && doc.id) {
+            const url = `${this.apiBaseUrl}/docs/${encodeURIComponent(doc.id)}/file`;
+            bodyEl.classList.remove('doc-modal-body--md');
+            const summary = this.escapeHtml(doc.ai_summary || 'PDF document.');
+            const safeUrl = this.escapeHtml(url);
+            bodyEl.innerHTML = `<p class="doc-file-summary">${summary}</p>
+                <div class="doc-open-external-wrap">
+                    <a href="${safeUrl}" target="_blank" rel="noopener noreferrer" class="btn-primary">Open PDF in browser</a>
+                </div>`;
         } else {
             bodyEl.classList.add('doc-modal-body--md');
             const raw = doc.content || doc.ai_summary || '(No body)';
@@ -1769,18 +1981,37 @@ class AcademiApp {
         try {
             const raw = localStorage.getItem(this.guideDoneStorageKey(guideId));
             const arr = raw ? JSON.parse(raw) : [];
-            return Array.isArray(arr) ? arr : [];
+            if (!Array.isArray(arr)) return [];
+            return arr.map((x) => Number(x)).filter((x) => Number.isFinite(x));
         } catch {
             return [];
         }
     }
 
     setGuideStepDone(guideId, stepId, done) {
+        const id = Number(stepId);
+        if (!Number.isFinite(id)) return;
         let cur = this.getGuideDoneList(guideId);
-        const ix = cur.indexOf(stepId);
-        if (done && ix < 0) cur = [...cur, stepId];
-        if (!done && ix >= 0) cur = cur.filter((n) => n !== stepId);
+        const ix = cur.indexOf(id);
+        if (done && ix < 0) cur = [...cur, id];
+        if (!done && ix >= 0) cur = cur.filter((n) => n !== id);
         localStorage.setItem(this.guideDoneStorageKey(guideId), JSON.stringify(cur));
+    }
+
+    guideProgressCounts(guide) {
+        if (!guide) return { done: 0, total: 0 };
+        const steps = guide.steps || [];
+        const total = steps.length;
+        if (total === 0) return { done: 0, total: 0 };
+        const stepIds = new Set(
+            steps.map((s, index) => {
+                const n = Number(s.id);
+                return Number.isFinite(n) && n > 0 ? n : index + 1;
+            }),
+        );
+        const doneList = this.getGuideDoneList(guide.id);
+        const done = doneList.filter((stepDoneId) => stepIds.has(stepDoneId)).length;
+        return { done, total };
     }
 
     showGuidePanel(which) {
@@ -1929,6 +2160,8 @@ class AcademiApp {
         }
         for (const g of this.guideList) {
             const nSteps = (g.steps && g.steps.length) || 0;
+            const { done, total } = this.guideProgressCounts(g);
+            const prog = total > 0 ? ` · ${done}/${total}` : '';
             const row = document.createElement('div');
             row.className = 'guide-catalog-row glass';
             const openBtn = document.createElement('button');
@@ -1943,7 +2176,7 @@ class AcademiApp {
                 <span class="guide-catalog-body">
                     <span class="guide-catalog-title">${title}</span>
                     <span class="guide-catalog-desc">${desc}</span>
-                    <span class="guide-catalog-meta">${nSteps} step${nSteps === 1 ? '' : 's'}</span>
+                    <span class="guide-catalog-meta">${nSteps} step${nSteps === 1 ? '' : 's'}${prog}</span>
                 </span>`;
             row.appendChild(openBtn);
             const mine = g.created_by && uid && g.created_by === uid;
@@ -2000,10 +2233,9 @@ class AcademiApp {
 
     refreshGuideDetailProgress() {
         if (!this.guideActive) return;
-        const steps = this.guideActive.steps || [];
-        const done = this.getGuideDoneList(this.guideActive.id).length;
+        const { done, total } = this.guideProgressCounts(this.guideActive);
         const el = document.getElementById('guideDetailProgressText');
-        if (el) el.textContent = `${done}/${steps.length}`;
+        if (el) el.textContent = `${done}/${total}`;
     }
 
     renderGuideDetail() {
@@ -2016,7 +2248,7 @@ class AcademiApp {
         const desc = this.escapeHtml(g.description || '');
         const steps = g.steps || [];
         const doneList = this.getGuideDoneList(g.id);
-        const doneCount = doneList.length;
+        const { done: doneCount, total: totalSteps } = this.guideProgressCounts(g);
         const rawColor = typeof g.color === 'string' ? g.color.trim() : '';
         const accent = /^#[0-9A-Fa-f]{6}$/.test(rawColor) ? rawColor : '#5b8cff';
         const uid = this.currentUser?.id;
@@ -2031,7 +2263,7 @@ class AcademiApp {
             ${ownerBar}
             <div class="guide-list-heading">
                 <div class="progress-ring progress-ring--static" style="border-color: ${accent}; border-top-color: ${accent}">
-                    <div class="progress-text" id="guideDetailProgressText">${doneCount}/${steps.length}</div>
+                    <div class="progress-text" id="guideDetailProgressText">${doneCount}/${totalSteps}</div>
                 </div>
                 <div>
                     <h2><span class="guide-header-icon">${icon}</span> ${title}</h2>
@@ -2040,7 +2272,11 @@ class AcademiApp {
             </div>`;
         stepsEl.innerHTML = '';
         steps.forEach((step, index) => {
-            const checked = doneList.includes(step.id);
+            const sid =
+                step.id != null && step.id !== '' && Number.isFinite(Number(step.id)) && Number(step.id) > 0
+                    ? Number(step.id)
+                    : index + 1;
+            const checked = doneList.includes(sid);
             const row = document.createElement('div');
             row.className = `step${checked ? ' completed' : ''}${!checked && index === doneCount ? ' active' : ''}`;
             const num = this.escapeHtml(String(index + 1));
@@ -2050,7 +2286,7 @@ class AcademiApp {
                 <div class="step-number">${num}</div>
                 <div class="step-content">
                     <label class="guide-step-label">
-                        <input type="checkbox" class="guide-step-check" data-step-id="${step.id}" ${checked ? 'checked' : ''} />
+                        <input type="checkbox" class="guide-step-check" data-step-id="${sid}" ${checked ? 'checked' : ''} />
                         <span><h4>${stitle}</h4><p>${sbody}</p></span>
                     </label>
                 </div>`;

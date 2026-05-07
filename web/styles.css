@@ -565,6 +565,23 @@ body {
     cursor: pointer;
 }
 
+a.btn-primary {
+    display: inline-block;
+    text-decoration: none;
+    text-align: center;
+}
+
+.doc-file-summary {
+    margin: 0 0 var(--space-3);
+    color: var(--text-secondary);
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+.doc-modal-body .doc-open-external-wrap {
+    margin-top: var(--space-3);
+}
+
 .btn-secondary {
     padding: var(--space-2) var(--space-4);
     border-radius: var(--radius-lg);
@@ -1551,6 +1568,34 @@ a.source-link {
 
 .doc-modal-body--md h4 {
     font-size: 14px;
+}
+
+.doc-modal-body--md pre {
+    margin: 0 0 var(--space-3);
+    padding: var(--space-3);
+    border-radius: var(--radius-md);
+    background: rgba(0, 0, 0, 0.28);
+    overflow: auto;
+}
+
+.doc-modal-body--md code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 12px;
+}
+
+.doc-modal-body--md pre code {
+    white-space: pre;
+    display: block;
+    background: transparent;
+    padding: 0;
+}
+
+.doc-modal-body--md p code,
+.doc-modal-body--md li code {
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.08);
+    white-space: pre-wrap;
 }
 
 .doc-modal-body--md ul,
