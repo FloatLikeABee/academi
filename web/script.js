@@ -95,6 +95,9 @@ class AcademiApp {
         this.documentMode = localStorage.getItem('academi_document_mode') === '1';
         this.researchEnabled = localStorage.getItem('academi_research') !== '0';
         this.helpYouLearnMode = localStorage.getItem('academi_help_learn') === '1';
+        this.aiProvider = localStorage.getItem('academi_ai_provider') || '';
+        this.polishAiProvider = localStorage.getItem('academi_ai_polish_provider') || '';
+        this.businessPipelineEnabled = localStorage.getItem('academi_business_pipeline') !== '0';
         this.pendingDocIds = [];
         this.docsList = [];
         this._statusResetTimer = null;
@@ -124,6 +127,7 @@ class AcademiApp {
 
     init() {
         this.bindEvents();
+        void this.initAiProviderSettings();
         void this.ensureMockSession().then(() => {
             this.applyProfileUser();
         });
@@ -877,6 +881,60 @@ class AcademiApp {
         }));
     }
 
+    async initAiProviderSettings() {
+        const biz = document.getElementById('aiBusinessProviderSelect');
+        const polish = document.getElementById('aiPolishProviderSelect');
+        const pipe = document.getElementById('businessPipelineToggle');
+        if (!biz || !polish) return;
+
+        const fillSelect = (sel, firstLabel) => {
+            sel.innerHTML = '';
+            const opt0 = document.createElement('option');
+            opt0.value = '';
+            opt0.textContent = firstLabel;
+            sel.appendChild(opt0);
+        };
+        fillSelect(biz, 'Server default');
+        fillSelect(polish, 'Same as business model');
+
+        try {
+            const res = await fetch(`${this.apiBaseUrl}/ai/providers`);
+            if (res.ok) {
+                const data = await res.json();
+                const providers = data.providers || [];
+                for (const p of providers) {
+                    if (!p.has_api_key) continue;
+                    for (const sel of [biz, polish]) {
+                        const o = document.createElement('option');
+                        o.value = p.id;
+                        o.textContent = `${p.name} (${p.model})`;
+                        sel.appendChild(o);
+                    }
+                }
+            }
+        } catch (e) {
+            console.warn('AI providers:', e);
+        }
+
+        biz.value = this.aiProvider;
+        polish.value = this.polishAiProvider;
+        if (pipe) {
+            pipe.checked = this.businessPipelineEnabled;
+            pipe.addEventListener('change', () => {
+                this.businessPipelineEnabled = pipe.checked;
+                localStorage.setItem('academi_business_pipeline', this.businessPipelineEnabled ? '1' : '0');
+            });
+        }
+        biz.addEventListener('change', () => {
+            this.aiProvider = biz.value;
+            localStorage.setItem('academi_ai_provider', this.aiProvider);
+        });
+        polish.addEventListener('change', () => {
+            this.polishAiProvider = polish.value;
+            localStorage.setItem('academi_ai_polish_provider', this.polishAiProvider);
+        });
+    }
+
     async callAIChat() {
         const headers = {
             'Content-Type': 'application/json',
@@ -892,6 +950,9 @@ class AcademiApp {
             body: JSON.stringify({
                 messages: this.buildApiMessages(),
                 context: {},
+                ai_provider: this.aiProvider || undefined,
+                polish_ai_provider: this.polishAiProvider || undefined,
+                disable_business_pipeline: !this.businessPipelineEnabled,
                 document_mode: this.documentMode,
                 disable_research: (this.documentMode || this.helpYouLearnMode) ? !this.researchEnabled : true,
                 doc_ids: [...this.pendingDocIds],

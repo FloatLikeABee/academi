@@ -1,11 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
-  View, Text, StyleSheet, FlatList, TouchableOpacity,
+  View, Text, StyleSheet, TouchableOpacity,
   Image, Switch, ScrollView
 } from 'react-native';
-import Button from '../components/Button';
-import TagChip from '../components/TagChip';
 import useAppStore from '../store/appStore';
+import { getAcademiApiBaseUrl, ensureAcademiSession, fetchAiProviders } from '../services/academiApi';
 
 const userData = {
   name: "Alex Chen",
@@ -29,7 +28,60 @@ const settingsItems = [
 ];
 
 export default function ProfileScreen() {
-  const { isDarkMode, toggleTheme } = useAppStore();
+  const {
+    isDarkMode,
+    toggleTheme,
+    aiBusinessProvider,
+    aiPolishProvider,
+    businessPipelineEnabled,
+    setAIBusinessProvider,
+    setAIPolishProvider,
+    setBusinessPipelineEnabled,
+  } = useAppStore();
+  const [providers, setProviders] = useState([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const base = getAcademiApiBaseUrl();
+        await ensureAcademiSession(base);
+        const list = await fetchAiProviders(base);
+        if (!cancelled) {
+          setProviders((list || []).filter((p) => p.has_api_key));
+        }
+      } catch {
+        if (!cancelled) setProviders([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const renderAiChipRow = (selected, onSelect, rowKeyPrefix, defaultLabel) => (
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.aiChipsRow}>
+      <TouchableOpacity
+        style={[styles.aiChip, !selected && styles.aiChipActive]}
+        onPress={() => onSelect('')}
+        activeOpacity={0.7}
+      >
+        <Text style={styles.aiChipText}>{defaultLabel}</Text>
+      </TouchableOpacity>
+      {providers.map((p) => (
+        <TouchableOpacity
+          key={`${rowKeyPrefix}-${p.id}`}
+          style={[styles.aiChip, selected === p.id && styles.aiChipActive]}
+          onPress={() => onSelect(p.id)}
+          activeOpacity={0.7}
+        >
+          <Text style={styles.aiChipText} numberOfLines={1}>
+            {p.name}
+          </Text>
+        </TouchableOpacity>
+      ))}
+    </ScrollView>
+  );
 
   return (
     <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
@@ -77,6 +129,29 @@ export default function ProfileScreen() {
             ios_backgroundColor="#3e3e3e"
             value={isDarkMode}
             onValueChange={toggleTheme}
+          />
+        </View>
+      </View>
+
+      <View style={styles.aiSection}>
+        <Text style={styles.sectionTitle}>AI models</Text>
+        <Text style={styles.aiHint}>Business (main) — used for Help you learn and when you set it on web</Text>
+        {renderAiChipRow(aiBusinessProvider, setAIBusinessProvider, 'biz', 'Server default')}
+        <Text style={[styles.aiHint, { marginTop: 12 }]}>Polish / preprocess — empty means same as business</Text>
+        {renderAiChipRow(aiPolishProvider, setAIPolishProvider, 'polish', 'Same as business')}
+        <View style={styles.themeToggleRow}>
+          <View style={styles.themeToggleLeft}>
+            <Text style={styles.themeTitle}>Polish + library RAG</Text>
+            <Text style={styles.themeSubtitle}>
+              For document-agent chat on web: business polish and up to 5 related saved docs
+            </Text>
+          </View>
+          <Switch
+            trackColor={{ false: '#767577', true: '#5B8CFF' }}
+            thumbColor={businessPipelineEnabled ? '#0A0F1C' : '#FFFFFF'}
+            ios_backgroundColor="#3e3e3e"
+            value={businessPipelineEnabled}
+            onValueChange={setBusinessPipelineEnabled}
           />
         </View>
       </View>
@@ -266,5 +341,38 @@ const styles = StyleSheet.create({
     color: '#FF6B6B',
     fontSize: 16,
     fontWeight: '600',
+  },
+  aiSection: {
+    paddingHorizontal: 16,
+    paddingBottom: 8,
+  },
+  aiHint: {
+    color: '#A8B2D1',
+    fontSize: 12,
+    marginBottom: 8,
+    lineHeight: 16,
+  },
+  aiChipsRow: {
+    flexGrow: 0,
+    marginBottom: 4,
+  },
+  aiChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    marginRight: 8,
+    maxWidth: 200,
+  },
+  aiChipActive: {
+    borderColor: 'rgba(91, 140, 255, 0.7)',
+    backgroundColor: 'rgba(91, 140, 255, 0.15)',
+  },
+  aiChipText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '500',
   },
 });

@@ -15,6 +15,7 @@ import (
 	"github.com/academi/backend/internal/config"
 	"github.com/academi/backend/internal/database"
 	docs "github.com/academi/backend/internal/docs"
+	"github.com/academi/backend/internal/models"
 	"github.com/academi/backend/internal/research"
 )
 
@@ -51,14 +52,16 @@ type SourceReference struct {
 }
 
 type ChatRequest struct {
-	Message          string            `json:"message"`
-	Context          map[string]string `json:"context"`
-	AIProvider       string            `json:"ai_provider"`
-	Messages         []ChatMessage     `json:"messages"`
-	DocumentMode     bool              `json:"document_mode"`
-	DisableResearch  bool              `json:"disable_research"`
-	DocIDs           []string          `json:"doc_ids"`
-	HelpYouLearn     bool              `json:"help_you_learn"`
+	Message                  string            `json:"message"`
+	Context                  map[string]string `json:"context"`
+	AIProvider               string            `json:"ai_provider"`
+	PolishAIProvider         string            `json:"polish_ai_provider"`
+	DisableBusinessPipeline  bool              `json:"disable_business_pipeline"`
+	Messages                 []ChatMessage     `json:"messages"`
+	DocumentMode             bool              `json:"document_mode"`
+	DisableResearch          bool              `json:"disable_research"`
+	DocIDs                   []string          `json:"doc_ids"`
+	HelpYouLearn             bool              `json:"help_you_learn"`
 }
 
 type SummarizeRequest struct {
@@ -124,12 +127,15 @@ func (s *Service) ChatWithProvider(userMessage string, context map[string]string
 	return s.completeChat(provider, messages)
 }
 
-func (s *Service) completeChat(provider *config.AIProvider, messages []ChatMessage) (string, error) {
+func (s *Service) chatCompletion(provider *config.AIProvider, messages []ChatMessage, maxTokens int, temperature float64) (string, error) {
+	if maxTokens <= 0 {
+		maxTokens = provider.MaxTokens
+	}
 	reqBody := ChatCompletionRequest{
 		Model:       provider.Model,
 		Messages:    messages,
-		MaxTokens:   provider.MaxTokens,
-		Temperature: provider.Temperature,
+		MaxTokens:   maxTokens,
+		Temperature: temperature,
 	}
 
 	jsonData, err := json.Marshal(reqBody)
@@ -171,6 +177,10 @@ func (s *Service) completeChat(provider *config.AIProvider, messages []ChatMessa
 	}
 
 	return completion.Choices[0].Message.Content, nil
+}
+
+func (s *Service) completeChat(provider *config.AIProvider, messages []ChatMessage) (string, error) {
+	return s.chatCompletion(provider, messages, provider.MaxTokens, provider.Temperature)
 }
 
 func lastUserSnippet(req ChatRequest) string {
@@ -215,7 +225,7 @@ func clipConversation(msgs []ChatMessage, maxMessages int) []ChatMessage {
 	return append([]ChatMessage{}, msgs[len(msgs)-maxMessages:]...)
 }
 
-func (s *Service) buildChatPayload(req ChatRequest) ([]ChatMessage, []SourceReference, error) {
+func (s *Service) buildChatPayload(req ChatRequest, ragDocs []models.Document) ([]ChatMessage, []SourceReference, error) {
 	sys := systemDefault
 	if req.DocumentMode {
 		sys = systemDocumentAgent
@@ -252,6 +262,23 @@ func (s *Service) buildChatPayload(req ChatRequest) ([]ChatMessage, []SourceRefe
 		out = append(out, ChatMessage{
 			Role:    "system",
 			Content: fmt.Sprintf("Attached document «%s» (type %s):\n%s", d.Title, d.Type, chunk),
+		})
+	}
+
+	for _, d := range ragDocs {
+		if strings.EqualFold(strings.TrimSpace(d.Type), "image") {
+			continue
+		}
+		if strings.TrimSpace(d.Content) == "" {
+			continue
+		}
+		chunk := d.Content
+		if len(chunk) > 120000 {
+			chunk = chunk[:120000] + "\n… [truncated]"
+		}
+		out = append(out, ChatMessage{
+			Role:    "system",
+			Content: fmt.Sprintf("Retrieved from your saved document library (reference — verify accuracy) «%s» (type %s):\n%s", d.Title, d.Type, chunk),
 		})
 	}
 
@@ -305,36 +332,82 @@ func (s *Service) buildChatPayload(req ChatRequest) ([]ChatMessage, []SourceRefe
 	return out, researchSources, nil
 }
 
-func (s *Service) ChatWithMessages(req ChatRequest) (string, []SourceReference, error) {
+func (s *Service) ChatWithMessages(req ChatRequest, _ string) (string, []SourceReference, *BusinessPipelineMeta, error) {
 	if req.HelpYouLearn || s.docIDsIncludeImage(req.DocIDs) {
 		user := strings.TrimSpace(req.Message)
 		if user == "" {
 			user = lastUserSnippet(req)
 		}
 		prior := clipConversation(req.Messages, 40)
-		return s.runHelpYouLearn(req.DocIDs, user, !req.DisableResearch, req.AIProvider, prior)
+		reply, src, err := s.runHelpYouLearn(req.DocIDs, user, !req.DisableResearch, req.AIProvider, prior)
+		return reply, src, nil, err
 	}
 
-	payload, researchSources, err := s.buildChatPayload(req)
+	working := req
+	var pipeline *BusinessPipelineMeta
+	var ragDocs []models.Document
+
+	if working.DocumentMode && !working.DisableBusinessPipeline && !s.docIDsIncludeImage(working.DocIDs) {
+		last := lastUserSnippet(working)
+		if last != "" {
+			docSvc := docs.NewService(s.cfg.Server.UploadDir)
+			polishName := resolvePolishProviderName(working)
+			polishedText, isBiz, perr := s.polishIfBusinessQuery(polishName, last)
+			if perr != nil {
+				log.Printf("business pipeline polish: %v", perr)
+			}
+			queryForRAG := last
+			original := last
+			pipeline = &BusinessPipelineMeta{OriginalUserMessage: original}
+			if perr != nil {
+				pipeline.PolishError = perr.Error()
+			}
+			if perr == nil && isBiz && strings.TrimSpace(polishedText) != "" && polishedText != last {
+				patchLastUserMessage(&working, polishedText)
+				queryForRAG = polishedText
+				pipeline.PolishedUserMessage = polishedText
+				pipeline.BusinessRelated = true
+			} else if perr == nil && isBiz {
+				pipeline.BusinessRelated = true
+				pipeline.PolishedUserMessage = last
+			}
+
+			excl := make(map[string]struct{})
+			for _, id := range working.DocIDs {
+				excl[strings.TrimSpace(id)] = struct{}{}
+			}
+			ragDocs = docSvc.TopRelatedDocuments(queryForRAG, 5, excl)
+			if len(ragDocs) > 0 {
+				for _, d := range ragDocs {
+					pipeline.RAGDocuments = append(pipeline.RAGDocuments, BusinessPipelineDocRef{
+						ID:    d.ID,
+						Title: d.Title,
+					})
+				}
+			}
+		}
+	}
+
+	payload, researchSources, err := s.buildChatPayload(working, ragDocs)
 	if err != nil {
-		return "", nil, err
+		return "", nil, pipeline, err
 	}
 
 	provider, err := s.getProvider(req.AIProvider)
 	if err != nil {
-		return "", nil, err
+		return "", nil, pipeline, err
 	}
 
 	reply, err := s.completeChat(provider, payload)
 	if err != nil {
-		return "", nil, err
+		return "", nil, pipeline, err
 	}
 
 	sources := researchSources
 	if len(sources) == 0 {
 		sources = []SourceReference{{Title: "Academi", Type: "internal"}}
 	}
-	return reply, sources, nil
+	return reply, sources, pipeline, nil
 }
 
 func (s *Service) ChatHandler(c *gin.Context) {
@@ -353,7 +426,7 @@ func (s *Service) ChatHandler(c *gin.Context) {
 		return
 	}
 
-	response, sources, err := s.ChatWithMessages(req)
+	response, sources, pipeline, err := s.ChatWithMessages(req, auth.GetUserID(c))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -367,6 +440,10 @@ func (s *Service) ChatHandler(c *gin.Context) {
 	}
 	if req.HelpYouLearn {
 		out["offer_save_analysis"] = true
+	}
+
+	if pipeline != nil {
+		out["business_pipeline"] = pipeline
 	}
 
 	if req.DocumentMode && !req.HelpYouLearn {

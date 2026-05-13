@@ -22,6 +22,14 @@ const useAppStore = create((set, get) => ({
     theme: getTheme(state.themeMode),
   })),
   
+  aiBusinessProvider: '',
+  aiPolishProvider: '',
+  businessPipelineEnabled: true,
+
+  setAIBusinessProvider: (id) => set({ aiBusinessProvider: id || '' }),
+  setAIPolishProvider: (id) => set({ aiPolishProvider: id || '' }),
+  setBusinessPipelineEnabled: (v) => set({ businessPipelineEnabled: !!v }),
+
   setAITone: (tone) => set({ aiTone: tone }),
   setAIDepth: (depth) => set({ aiDepth: depth }),
   

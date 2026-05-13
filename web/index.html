@@ -202,6 +202,21 @@
                         <span>AI Tone</span>
                         <span class="setting-value">Casual</span>
                     </div>
+                    <div class="setting-item setting-item--stacked">
+                        <span class="setting-label-block">Business model (document agent)</span>
+                        <select id="aiBusinessProviderSelect" class="setting-select" aria-label="Business AI provider"></select>
+                        <p class="setting-hint">Main model for answers. Empty = server default.</p>
+                    </div>
+                    <div class="setting-item setting-item--stacked">
+                        <span class="setting-label-block">Polish / preprocess model</span>
+                        <select id="aiPolishProviderSelect" class="setting-select" aria-label="Polish AI provider"></select>
+                        <p class="setting-hint">First pass for business-related queries. Empty = same as business (same model for now).</p>
+                    </div>
+                    <label class="setting-item setting-item--toggle">
+                        <span class="setting-label-block">Polish + saved-docs RAG</span>
+                        <input type="checkbox" id="businessPipelineToggle" checked />
+                    </label>
+                    <p class="setting-hint setting-hint--after-toggle">When Document agent is on, rewrites business queries and pulls up to 5 related documents from your library as context.</p>
                 </div>
             </div>
         </main>

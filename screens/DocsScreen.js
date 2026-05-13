@@ -124,7 +124,7 @@ function mapApiDoc(d) {
 export default function DocsScreen() {
   const route = useRoute();
   const navigation = useNavigation();
-  const { theme, addNotification } = useAppStore();
+  const { theme, addNotification, aiBusinessProvider } = useAppStore();
   const [searchTerm, setSearchTerm] = useState('');
   const [viewMode, setViewMode] = useState('grid');
   const [activeCategory, setActiveCategory] = useState('All');
@@ -356,7 +356,10 @@ export default function DocsScreen() {
       try {
         await ensureAcademiSession(apiBase);
         const tok = getAcademiToken();
-        const data = await postLearnAnalysis(apiBase, tok, docId, { disableResearch: false });
+        const data = await postLearnAnalysis(apiBase, tok, docId, {
+          disableResearch: false,
+          aiProvider: aiBusinessProvider || undefined,
+        });
         if (jobId !== learnJobSeqRef.current) return;
         finish(true, data.response || '');
       } catch (e) {
@@ -364,7 +367,7 @@ export default function DocsScreen() {
         finish(false, e.message || 'Error');
       }
     },
-    [docs, maybeAlertLearnDone],
+    [docs, maybeAlertLearnDone, aiBusinessProvider],
   );
 
   const filteredDocs = docs.filter((doc) => {

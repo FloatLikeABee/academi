@@ -52,13 +52,21 @@ export async function fetchDocsBrief(apiBase, token) {
   return res.json();
 }
 
-export async function postLearnAnalysis(apiBase, token, docId, { disableResearch }) {
+export async function fetchAiProviders(apiBase) {
+  const res = await fetch(`${apiBase}/ai/providers`);
+  if (!res.ok) throw new Error(await readErrorMessage(res));
+  const data = await res.json();
+  return data.providers || [];
+}
+
+export async function postLearnAnalysis(apiBase, token, docId, { disableResearch, aiProvider }) {
   const res = await fetch(`${apiBase}/ai/learn`, {
     method: 'POST',
     headers: authHeaders(token, { 'Content-Type': 'application/json' }),
     body: JSON.stringify({
       doc_id: docId,
       disable_research: disableResearch,
+      ...(aiProvider ? { ai_provider: aiProvider } : {}),
     }),
   });
   if (!res.ok) throw new Error(await readErrorMessage(res));
